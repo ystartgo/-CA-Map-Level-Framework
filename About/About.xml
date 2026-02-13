@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <name>【CA】地图多层框架 Map Level Framework</name>
+  <author>Cagier.阳</author>
+  <supportedVersions>
+    <li>1.6</li>
+  </supportedVersions>
+  <packageId>CA.MapLevelFramework</packageId>
+  <description>Framework for adding vertical map levels (floors, underground, sky, underwater) to RimWorld. Provides API for other mods to create and manage sub-maps at different elevation levels.</description>
+  <modDependencies>
+    <li>
+      <packageId>brrainz.harmony</packageId>
+      <displayName>Harmony</displayName>
+    </li>
+  </modDependencies>
+</ModMetaData>

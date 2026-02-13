@@ -1,0 +1,8 @@
+is_global = true
+build_property.RootNamespace = MapLevelFramework
+build_property.ProjectDir = B:\rimworld-code\_SourceCode\Develop\多层\【CA】地图多层框架 Map Level Framework\Source\MapLevelFramework\
+build_property.EnableComHosting = 
+build_property.EnableGeneratedComInterfaceComImportInterop = 
+build_property.CsWinRTUseWindowsUIXamlProjections = false
+build_property.EffectiveAnalysisLevelStyle = 
+build_property.EnableCodeStyleSeverity = 

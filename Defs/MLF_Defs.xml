@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Defs>
+
+  <!-- 层级地图专用 Biome（无动物/植物/天气） -->
+  <BiomeDef>
+    <defName>MLF_LevelBiome</defName>
+    <label>level map biome</label>
+    <description>An interior biome for level maps.</description>
+    <generatesNaturally>false</generatesNaturally>
+    <animalDensity>0</animalDensity>
+    <plantDensity>0</plantDensity>
+    <wildAnimalsCanWanderInto>false</wildAnimalsCanWanderInto>
+    <diseaseMtbDays>999</diseaseMtbDays>
+    <baseWeatherCommonalities>
+      <Clear>1</Clear>
+    </baseWeatherCommonalities>
+  </BiomeDef>
+
+  <!-- GenStep 定义 -->
+  <GenStepDef>
+    <defName>MLF_LevelInterior</defName>
+    <order>10</order>
+    <genStep Class="MapLevelFramework.GenStep_LevelInterior"/>
+  </GenStepDef>
+
+  <!-- 层级子地图的 MapGeneratorDef -->
+  <MapGeneratorDef>
+    <defName>MLF_LevelMapGenerator</defName>
+    <pocketMapProperties>
+      <biome>MLF_LevelBiome</biome>
+      <temperature>21</temperature>
+    </pocketMapProperties>
+    <genSteps>
+      <li>MLF_LevelInterior</li>
+    </genSteps>
+  </MapGeneratorDef>
+
+  <!-- 层级子地图的 WorldObjectDef -->
+  <WorldObjectDef>
+    <defName>MLF_LevelMap</defName>
+    <label>level map</label>
+    <worldObjectClass>MapLevelFramework.LevelMapParent</worldObjectClass>
+    <mapGenerator>MLF_LevelMapGenerator</mapGenerator>
+    <selectable>false</selectable>
+    <neverMultiSelect>true</neverMultiSelect>
+    <saved>false</saved>
+  </WorldObjectDef>
+
+</Defs>
