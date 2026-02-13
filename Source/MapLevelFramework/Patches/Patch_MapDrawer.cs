@@ -20,6 +20,9 @@ namespace MapLevelFramework.Patches
             var level = mgr.GetLevel(mgr.FocusedElevation);
             if (level?.LevelMap == null) return;
 
+            // 子地图的 MapDrawer 不在主循环中更新，手动触发 section 重建
+            Render.LevelRenderer.UpdateLevelMapSections(level.LevelMap);
+
             var offset = LevelCoordUtility.GetDrawOffset(level);
 
             // 叠加渲染子地图的静态 mesh（Y 偏移确保覆盖主地图地形）
@@ -27,6 +30,9 @@ namespace MapLevelFramework.Patches
 
             // 叠加渲染子地图的动态 Thing
             Render.LevelRenderer.DrawLevelDynamicThings(level.LevelMap, level);
+
+            // 叠加渲染子地图的覆盖层（designations、overlays、flecks 等）
+            Render.LevelRenderer.DrawLevelOverlays(level.LevelMap, level);
         }
     }
 }
