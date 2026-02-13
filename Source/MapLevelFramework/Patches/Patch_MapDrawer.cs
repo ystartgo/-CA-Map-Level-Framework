@@ -22,7 +22,7 @@ namespace MapLevelFramework.Patches
 
             var offset = LevelCoordUtility.GetDrawOffset(level);
 
-            // 叠加渲染子地图的静态 mesh
+            // 叠加渲染子地图的静态 mesh（Y 偏移确保覆盖主地图地形）
             Render.LevelRenderer.DrawLevelMapMesh(level.LevelMap, offset);
 
             // 叠加渲染子地图的动态 Thing

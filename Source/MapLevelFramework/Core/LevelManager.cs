@@ -29,6 +29,15 @@ namespace MapLevelFramework
         /// </summary>
         private int focusedElevation = 0;
 
+        // ========== 渲染过滤 ==========
+
+        /// <summary>
+        /// 当前激活的渲染过滤层级。非 null 时，Thing.Print 和 Thing.DynamicDrawPhase
+        /// 补丁会跳过该层级 area 内的主地图物体。
+        /// 由 FocusLevel() 设置/清除。
+        /// </summary>
+        internal static LevelData ActiveRenderFilter;
+
         // ========== 属性 ==========
 
         /// <summary>
@@ -157,8 +166,48 @@ namespace MapLevelFramework
             int old = focusedElevation;
             if (old == elevation) return; // 防止重复切换
 
+            // 切换前：如果之前有聚焦层级，标记旧 area 的 section 为脏（恢复建筑显示）
+            if (old != 0 && levels.TryGetValue(old, out var oldLevel))
+            {
+                MarkAreaSectionsDirty(oldLevel.area);
+            }
+
             focusedElevation = elevation;
+
+            // 更新渲染过滤器
+            if (elevation != 0 && levels.TryGetValue(elevation, out var newLevel))
+            {
+                ActiveRenderFilter = newLevel;
+                // 标记新 area 的 section 为脏（隐藏建筑）
+                MarkAreaSectionsDirty(newLevel.area);
+            }
+            else
+            {
+                ActiveRenderFilter = null;
+            }
+
             Log.Message($"[MapLevelFramework] Focus switched: {old} -> {elevation}");
+        }
+
+        /// <summary>
+        /// 标记主地图上指定区域内的 section 为脏，触发重新生成。
+        /// 这会导致 SectionLayer_Things 重新调用 Thing.Print，
+        /// 届时我们的补丁会根据 ActiveRenderFilter 决定是否跳过。
+        /// </summary>
+        private void MarkAreaSectionsDirty(CellRect area)
+        {
+            if (map?.mapDrawer == null) return;
+
+            ulong dirtyFlags = MapMeshFlagDefOf.Things | MapMeshFlagDefOf.Buildings
+                             | MapMeshFlagDefOf.BuildingsDamage;
+
+            foreach (IntVec3 cell in area)
+            {
+                if (cell.InBounds(map))
+                {
+                    map.mapDrawer.MapMeshDirty(cell, dirtyFlags);
+                }
+            }
         }
 
         /// <summary>
@@ -240,6 +289,17 @@ namespace MapLevelFramework
         }
 
         // ========== 生命周期 ==========
+
+        public override void FinalizeInit()
+        {
+            base.FinalizeInit();
+            // 加载存档后恢复渲染过滤器
+            if (focusedElevation != 0 && levels.TryGetValue(focusedElevation, out var data))
+            {
+                ActiveRenderFilter = data;
+                MarkAreaSectionsDirty(data.area);
+            }
+        }
 
         public override void MapComponentOnGUI()
         {

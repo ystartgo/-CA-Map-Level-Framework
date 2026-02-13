@@ -8,17 +8,21 @@ namespace MapLevelFramework.Render
 {
     /// <summary>
     /// 层级叠加渲染器 - 将子地图的内容渲染到主地图的指定区域上。
-    /// 
+    ///
     /// 核心原理：
     /// 1. 获取子地图的 Section mesh 数据
-    /// 2. 用 Graphics.DrawMesh + offset 画到主地图对应位置
+    /// 2. 用 Graphics.DrawMesh + offset 画到主地图对应位置（Y 偏移防止 z-fighting）
     /// 3. 动态 Thing 也通过 offset 重新定位绘制
+    /// 4. 主地图在 area 内的动态物体由 Patch_DynamicDrawManager 跳过
     /// </summary>
     public static class LevelRenderer
     {
         // 反射缓存
         private static FieldInfo sectionsField;
         private static FieldInfo layersField;
+
+        // 层级内容的 Y 偏移，确保渲染在主地图地形之上
+        private const float YOffset = 0.5f;
 
         static LevelRenderer()
         {
@@ -35,6 +39,8 @@ namespace MapLevelFramework.Render
         {
             if (levelMap?.mapDrawer == null) return;
             if (sectionsField == null || layersField == null) return;
+
+            drawOffset.y += YOffset;
 
             Section[,] sections = sectionsField.GetValue(levelMap.mapDrawer) as Section[,];
             if (sections == null) return;
@@ -53,7 +59,6 @@ namespace MapLevelFramework.Render
                     {
                         if (layer == null) continue;
 
-                        // 跳过迷雾/光照层（子地图的迷雾不应该画到主地图上）
                         string layerName = layer.GetType().Name;
                         if (ShouldSkipLayer(layerName)) continue;
 
@@ -83,6 +88,7 @@ namespace MapLevelFramework.Render
             if (levelMap?.listerThings == null) return;
 
             Vector3 offset = LevelCoordUtility.GetDrawOffset(level);
+            offset.y += YOffset;
 
             foreach (Thing thing in levelMap.listerThings.AllThings)
             {
