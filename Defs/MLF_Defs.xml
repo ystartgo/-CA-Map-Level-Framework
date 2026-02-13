@@ -43,7 +43,7 @@
     <mapGenerator>MLF_LevelMapGenerator</mapGenerator>
     <selectable>false</selectable>
     <neverMultiSelect>true</neverMultiSelect>
-    <saved>false</saved>
+    <saved>true</saved>
   </WorldObjectDef>
 
 </Defs>

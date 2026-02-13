@@ -293,11 +293,21 @@ namespace MapLevelFramework
         public override void FinalizeInit()
         {
             base.FinalizeInit();
-            // 加载存档后恢复渲染过滤器
-            if (focusedElevation != 0 && levels.TryGetValue(focusedElevation, out var data))
+
+            // 加载存档后恢复 hostManager 关联（LevelMapParent 不序列化 hostManager）
+            foreach (var data in levels.Values)
             {
-                ActiveRenderFilter = data;
-                MarkAreaSectionsDirty(data.area);
+                if (data.mapParent != null)
+                {
+                    data.mapParent.hostManager = this;
+                }
+            }
+
+            // 加载存档后恢复渲染过滤器
+            if (focusedElevation != 0 && levels.TryGetValue(focusedElevation, out var focusData))
+            {
+                ActiveRenderFilter = focusData;
+                MarkAreaSectionsDirty(focusData.area);
             }
         }
 
