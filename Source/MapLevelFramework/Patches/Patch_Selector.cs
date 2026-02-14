@@ -51,6 +51,13 @@ namespace MapLevelFramework.Patches
                 }
             }
 
+            // Zone
+            Zone zone = level.LevelMap.zoneManager.ZoneAt(cell);
+            if (zone != null)
+            {
+                objects.Add(zone);
+            }
+
             __result = objects;
             return false;
         }
