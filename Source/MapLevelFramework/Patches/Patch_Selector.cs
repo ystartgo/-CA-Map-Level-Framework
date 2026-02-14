@@ -75,14 +75,20 @@ namespace MapLevelFramework.Patches
         {
             savedMapIndex = -1;
 
-            Thing thing = obj as Thing;
-            if (thing?.Map == null) return;
+            // 获取对象所在的 Map
+            Map objMap = null;
+            if (obj is Thing thing)
+                objMap = thing.Map;
+            else if (obj is Zone zone)
+                objMap = zone.Map;
+
+            if (objMap == null) return;
 
             LevelManager manager;
             LevelData level;
-            if (LevelManager.IsLevelMap(thing.Map, out manager, out level))
+            if (LevelManager.IsLevelMap(objMap, out manager, out level))
             {
-                int subMapIndex = Find.Maps.IndexOf(thing.Map);
+                int subMapIndex = Find.Maps.IndexOf(objMap);
                 if (subMapIndex >= 0)
                 {
                     savedMapIndex = Current.Game.currentMapIndex;

@@ -65,6 +65,17 @@ namespace MapLevelFramework
             {
                 Log.Error($"[MapLevelFramework] Failed to patch SunShadows: {ex}");
             }
+
+            // SectionLayer_Zones 是 internal 类 - 聚焦层级时隐藏基地图 zone
+            try
+            {
+                Patches.Patch_ZoneLayer.Apply(HarmonyInstance);
+                Log.Message("[MapLevelFramework] Patched SectionLayer_Zones.Regenerate OK.");
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error($"[MapLevelFramework] Failed to patch ZoneLayer: {ex}");
+            }
         }
     }
 }

@@ -201,7 +201,7 @@ namespace MapLevelFramework
             if (map?.mapDrawer == null) return;
 
             ulong dirtyFlags = MapMeshFlagDefOf.Things | MapMeshFlagDefOf.Buildings
-                             | MapMeshFlagDefOf.BuildingsDamage;
+                             | MapMeshFlagDefOf.BuildingsDamage | MapMeshFlagDefOf.Zone;
 
             foreach (IntVec3 cell in area)
             {
@@ -273,7 +273,7 @@ namespace MapLevelFramework
 
         /// <summary>
         /// 获取当前应该用于交互的 Map。
-        /// 仅当鼠标在层级区域内时返回子地图，否则返回主地图。
+        /// 聚焦层级时始终返回子地图，否则返回主地图。
         /// </summary>
         public static Map CurrentInteractionMap
         {
@@ -288,15 +288,7 @@ namespace MapLevelFramework
                 var level = mgr.GetLevel(mgr.FocusedElevation);
                 if (level?.LevelMap == null) return baseMap;
 
-                try
-                {
-                    IntVec3 baseCell = IntVec3Utility.ToIntVec3(UI.MouseMapPosition());
-                    if (level.ContainsBaseMapCell(baseCell))
-                        return level.LevelMap;
-                }
-                catch { }
-
-                return baseMap;
+                return level.LevelMap;
             }
         }
 
