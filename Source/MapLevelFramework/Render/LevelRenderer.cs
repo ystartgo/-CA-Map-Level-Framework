@@ -41,7 +41,8 @@ namespace MapLevelFramework.Render
 
         /// <summary>
         /// 更新子地图的 section mesh。
-        /// 只更新包含 usableCell 的 section。
+        /// 调用 MapMeshDrawerUpdate_First 处理全局脏标记，
+        /// 然后手动更新所有活跃 section（确保不遗漏视野外的 section）。
         /// </summary>
         public static void UpdateLevelMapSections(Map levelMap, LevelData level)
         {
@@ -59,6 +60,10 @@ namespace MapLevelFramework.Render
                 return;
             }
 
+            // 让子地图的 MapDrawer 处理全局脏标记和 section 更新
+            levelMap.mapDrawer.MapMeshDrawerUpdate_First();
+
+            // 补充：确保所有活跃 section 都被更新（MapMeshDrawerUpdate_First 可能跳过视野外的）
             CellRect fullRect = new CellRect(0, 0, levelMap.Size.x, levelMap.Size.z);
             for (int x = 0; x < sections.GetLength(0); x++)
             {
