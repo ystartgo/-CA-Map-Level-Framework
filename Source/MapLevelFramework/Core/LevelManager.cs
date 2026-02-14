@@ -189,6 +189,9 @@ namespace MapLevelFramework
             }
 
             Log.Message($"[MapLevelFramework] Focus switched: {old} -> {elevation}");
+
+            // 标记屋顶覆盖层为脏，让 GetCellBool 补丁生效
+            map.roofGrid.Drawer.SetDirty();
         }
 
         /// <summary>

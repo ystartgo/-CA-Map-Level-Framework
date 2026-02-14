@@ -45,7 +45,7 @@ namespace MapLevelFramework.Gui
                 Rect btnRect = new Rect(startX, y, ButtonWidth, ButtonHeight);
 
                 bool isFocused = mgr.FocusedElevation == elev;
-                string label = elev == 0 ? "G" : (elev > 0 ? $"{elev}F" : $"B{-elev}");
+                string label = elev == 0 ? "1F" : (elev > 0 ? $"{elev + 1}F" : $"B{-elev}");
 
                 // 高亮当前层
                 if (isFocused)

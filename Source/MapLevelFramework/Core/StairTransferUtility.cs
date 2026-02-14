@@ -40,7 +40,8 @@ namespace MapLevelFramework
         }
 
         /// <summary>
-        /// 判断楼梯所在的地图是基地图还是子地图，返回目标地图和位置。
+        /// 根据楼梯的 targetElevation 确定目标地图和位置。
+        /// 支持 N 层：targetElevation=0 → 基地图，其他 → 对应层级子地图。
         /// </summary>
         public static bool TryGetTransferTarget(Building_Stairs stairs, out Map destMap, out IntVec3 destPos)
         {
@@ -50,25 +51,35 @@ namespace MapLevelFramework
             Map stairsMap = stairs.Map;
             if (stairsMap == null) return false;
 
-            // 检查楼梯是否在子地图上
-            if (LevelManager.IsLevelMap(stairsMap, out var manager, out var levelData))
+            // 找到管理这组层级的 LevelManager
+            LevelManager mgr = LevelManager.GetManager(stairsMap);
+            Map baseMap = stairsMap;
+
+            if (mgr == null && LevelManager.IsLevelMap(stairsMap, out var parentMgr, out _))
             {
-                // 在子地图上 → 目标是基地图
-                destMap = levelData.hostMap;
-                destPos = stairs.Position; // 同坐标
-                return destMap != null;
+                mgr = parentMgr;
+                baseMap = parentMgr.map;
             }
 
-            // 在基地图上 → 目标是子地图
-            var mgr = LevelManager.GetManager(stairsMap);
             if (mgr == null) return false;
 
-            var level = mgr.GetLevel(stairs.targetElevation);
-            if (level?.LevelMap == null) return false;
+            int targetElev = stairs.targetElevation;
 
-            destMap = level.LevelMap;
-            destPos = stairs.Position; // 同坐标
-            return true;
+            if (targetElev == 0)
+            {
+                // 目标是地面层
+                destMap = baseMap;
+            }
+            else
+            {
+                // 目标是某个子地图层级
+                var level = mgr.GetLevel(targetElev);
+                if (level?.LevelMap == null) return false;
+                destMap = level.LevelMap;
+            }
+
+            destPos = stairs.Position;
+            return destMap != null && destMap != stairsMap;
         }
     }
 }
