@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -314,6 +315,9 @@ namespace MapLevelFramework
                 }
             }
 
+            // 修复旧存档的 underGrid（确保可用区域的底层是 MLF_LevelBase）
+            RepairUnderGrid();
+
             // 加载存档后恢复渲染过滤器
             if (focusedElevation != 0 && levels.TryGetValue(focusedElevation, out var focusData))
             {
@@ -332,6 +336,52 @@ namespace MapLevelFramework
         }
 
         // ========== 内部方法 ==========
+
+        /// <summary>
+        /// 修复旧存档中 underGrid 未正确设置为 MLF_LevelBase 的问题。
+        /// 在 FinalizeInit 中调用，确保所有层级子地图的可用区域底层正确。
+        /// </summary>
+        private void RepairUnderGrid()
+        {
+            TerrainDef levelBase = DefDatabase<TerrainDef>.GetNamedSilentFail("MLF_LevelBase");
+            if (levelBase == null) return;
+
+            var underGridField = typeof(TerrainGrid).GetField("underGrid",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            if (underGridField == null) return;
+
+            TerrainDef openAir = DefDatabase<TerrainDef>.GetNamedSilentFail("MLF_OpenAir");
+
+            foreach (var level in levels.Values)
+            {
+                Map levelMap = level.LevelMap;
+                if (levelMap == null) continue;
+
+                TerrainDef[] underGrid = underGridField.GetValue(levelMap.terrainGrid) as TerrainDef[];
+                if (underGrid == null) continue;
+
+                int fixedCount = 0;
+                foreach (IntVec3 cell in levelMap.AllCells)
+                {
+                    if (level.usableCells != null && !level.usableCells.Contains(cell)) continue;
+                    if (!level.area.Contains(cell)) continue;
+
+                    int idx = levelMap.cellIndices.CellToIndex(cell);
+                    TerrainDef top = levelMap.terrainGrid.TerrainAt(cell);
+
+                    // 可行走地板的底层应该是 LevelBase
+                    if (top != openAir && top.passability != Traversability.Impassable
+                        && underGrid[idx] != levelBase)
+                    {
+                        underGrid[idx] = levelBase;
+                        fixedCount++;
+                    }
+                }
+
+                if (fixedCount > 0)
+                    Log.Message($"[MLF] Repaired {fixedCount} underGrid cells on level {level.elevation}");
+            }
+        }
 
         private Map GenerateLevelMap(LevelData data, IntVec3 size)
         {

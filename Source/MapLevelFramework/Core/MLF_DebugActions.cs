@@ -120,11 +120,27 @@ namespace MapLevelFramework
             Map levelMap = level.LevelMap;
             IntVec3 cell = UI.MouseCell();
 
-            // 1. 两张地图的地形
+            // 1. 两张地图的地形（topGrid + underGrid）
             TerrainDef baseTerrain = baseMap.terrainGrid.TerrainAt(cell);
             TerrainDef levelTerrain = cell.InBounds(levelMap)
                 ? levelMap.terrainGrid.TerrainAt(cell) : null;
-            Log.Message($"[MLF Debug] Cell {cell}: baseTerrain={baseTerrain?.defName}, levelTerrain={levelTerrain?.defName}");
+
+            var underGridField = typeof(TerrainGrid).GetField("underGrid",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            TerrainDef[] baseUnder = underGridField?.GetValue(baseMap.terrainGrid) as TerrainDef[];
+            TerrainDef[] levelUnder = underGridField?.GetValue(levelMap.terrainGrid) as TerrainDef[];
+            int idx = cell.InBounds(levelMap) ? levelMap.cellIndices.CellToIndex(cell) : -1;
+
+            string baseUnderName = (baseUnder != null && cell.InBounds(baseMap))
+                ? baseUnder[baseMap.cellIndices.CellToIndex(cell)]?.defName ?? "null" : "?";
+            string levelUnderName = (levelUnder != null && idx >= 0)
+                ? levelUnder[idx]?.defName ?? "null" : "?";
+
+            Log.Message($"[MLF Debug] Cell {cell}:");
+            Log.Message($"  Base  top={baseTerrain?.defName}, under={baseUnderName}");
+            Log.Message($"  Level top={levelTerrain?.defName}, under={levelUnderName}");
+            Log.Message($"  Level affordances: {(levelTerrain != null ? string.Join(",", levelTerrain.affordances) : "none")}");
+            Log.Message($"  usable={level.IsCellUsable(cell)}, inArea={level.area.Contains(cell)}");
 
             // 2. Section 信息
             var sectionsField = typeof(MapDrawer).GetField("sections",
@@ -142,7 +158,7 @@ namespace MapLevelFramework
             Section section = sections[sx, sz];
             if (section == null) { Log.Warning("[MLF Debug] section is null"); return; }
 
-            Log.Message($"[MLF Debug] Section[{sx},{sz}] dirtyFlags={section.dirtyFlags}, active={level.IsSectionActive(sx, sz)}");
+            Log.Message($"  Section[{sx},{sz}] dirtyFlags={section.dirtyFlags}, active={level.IsSectionActive(sx, sz)}");
 
             List<SectionLayer> layers = layersField?.GetValue(section) as List<SectionLayer>;
             if (layers == null) return;
@@ -160,6 +176,65 @@ namespace MapLevelFramework
                 }
                 Log.Message($"  Layer {name}: subMeshes={subCount}, finalized={finalizedCount}/{subCount}, totalVerts={totalVerts}");
             }
+        }
+
+        [DebugAction("Map Level Framework", "Fix Level Terrain",
+            actionType = DebugActionType.Action,
+            allowedGameStates = AllowedGameStates.PlayingOnMap)]
+        public static void FixLevelTerrain()
+        {
+            var baseMap = Find.CurrentMap;
+            var mgr = LevelManager.GetManager(baseMap);
+            if (mgr == null)
+            {
+                Log.Warning("[MLF Debug] No LevelManager on current map.");
+                return;
+            }
+
+            TerrainDef levelBase = DefDatabase<TerrainDef>.GetNamedSilentFail("MLF_LevelBase");
+            if (levelBase == null)
+            {
+                Log.Error("[MLF Debug] MLF_LevelBase terrain not found!");
+                return;
+            }
+
+            var underGridField = typeof(TerrainGrid).GetField("underGrid",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+
+            int totalFixed = 0;
+            foreach (var level in mgr.AllLevels)
+            {
+                Map levelMap = level.LevelMap;
+                if (levelMap == null) continue;
+
+                TerrainDef[] underGrid = underGridField?.GetValue(levelMap.terrainGrid) as TerrainDef[];
+                if (underGrid == null) continue;
+
+                TerrainDef openAir = DefDatabase<TerrainDef>.GetNamedSilentFail("MLF_OpenAir");
+                int fixedCount = 0;
+
+                foreach (IntVec3 cell in levelMap.AllCells)
+                {
+                    if (level.usableCells != null && !level.usableCells.Contains(cell)) continue;
+                    if (!level.area.Contains(cell)) continue;
+
+                    int idx = levelMap.cellIndices.CellToIndex(cell);
+                    TerrainDef top = levelMap.terrainGrid.TerrainAt(cell);
+
+                    // 如果 topGrid 是可行走的地板，确保 underGrid 是 LevelBase
+                    if (top != openAir && top.passability != Traversability.Impassable)
+                    {
+                        if (underGrid[idx] != levelBase)
+                        {
+                            underGrid[idx] = levelBase;
+                            fixedCount++;
+                        }
+                    }
+                }
+                totalFixed += fixedCount;
+                Log.Message($"[MLF Debug] Level {level.elevation}: fixed {fixedCount} underGrid cells to MLF_LevelBase");
+            }
+            Log.Message($"[MLF Debug] Total fixed: {totalFixed} cells");
         }
 
         private static void CreateTestLevel(int elevation, string name)
