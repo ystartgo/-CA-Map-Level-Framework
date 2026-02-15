@@ -21,6 +21,16 @@ namespace MapLevelFramework
         // ========== 层级数据 ==========
 
         /// <summary>
+        /// 最大层数限制（含地面层）。
+        /// 受渲染深度约束：Building Y = 5.988 + levelIndex × 0.5，
+        /// MetaOverlays Y = 14.268，levelIndex 最大 16（即 18F）。
+        /// 超过此限制，楼层内容会在深度缓冲中遮挡 GUI overlay。
+        /// </summary>
+        public const int MaxTotalFloors = 18;
+        // 最大子层级数 = MaxTotalFloors - 1（地面层不算）
+        private const int MaxSubLevels = MaxTotalFloors - 1;
+
+        /// <summary>
         /// 所有已创建的层级，按 elevation 索引。
         /// elevation 0 = 主地图（不在此字典中）。
         /// </summary>
@@ -102,6 +112,16 @@ namespace MapLevelFramework
             if (elevation == 0)
             {
                 Log.Error("[MapLevelFramework] Cannot register elevation 0 (reserved for ground level).");
+                return null;
+            }
+
+            if (levels.Count >= MaxSubLevels)
+            {
+                Messages.Message(
+                    $"[MLF] 最大 {MaxTotalFloors} 层，不服找泰南，再往上就突破天道了",
+                    MessageTypeDefOf.RejectInput, false);
+                Log.Warning($"[MapLevelFramework] Cannot register elevation {elevation}: " +
+                            $"max {MaxTotalFloors} floors reached (rendering depth limit).");
                 return null;
             }
 

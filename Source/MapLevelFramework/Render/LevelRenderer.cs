@@ -27,14 +27,18 @@ namespace MapLevelFramework.Render
         private const float YOffset = 0.5f;
 
         // 每层额外的 Y 偏移，确保高层在深度缓冲中覆盖低层
-        private const float YOffsetPerLevel = 0.15f;
+        // 需要足够大以分离不同楼层的深度（AltitudeLayer 间距 ≈ 0.366）
+        private const float YOffsetPerLevel = 0.5f;
 
         // render queue 基础提升量：确保子地图材质在基地图之后绘制
-        private const int RenderQueueElevation = 500;
+        // 保持较小值，避免超过 GUI overlay 的 queue（2900-3620）
+        private const int RenderQueueElevation = 100;
 
-        // 每层额外的 render queue 提升量，需要足够大以覆盖不同材质的 queue 差异
-        // RimWorld 材质 queue 范围约 2000-3000，间距 2000 确保高层始终覆盖低层
-        private const int RenderQueuePerLevel = 2000;
+        // 每层额外的 render queue 提升量
+        // 保持极小值，主要依靠 Y 偏移（深度缓冲）处理层间遮挡
+        // 10 × 20层 = 200，加上基础 100 = 300，原始材质最高约 2600
+        // 总计 2900，刚好不超过 GUI overlay 最低值 2900
+        private const int RenderQueuePerLevel = 10;
 
         // 材质副本缓存：(原始材质, 层级序号) → 提升 render queue 后的副本
         private static Dictionary<(Material, int), Material> elevatedMaterials = new Dictionary<(Material, int), Material>();
