@@ -166,9 +166,10 @@ namespace MapLevelFramework.Render
         /// <summary>
         /// 渲染子地图的静态 mesh。
         /// levelIndex 用于 render queue 分层：高层级用更高的 queue 确保覆盖低层级。
-        /// excludeCells 非 null 时，被高层覆盖的 section 会跳过建筑图层（只保留地形）。
+        /// 注意：被高层覆盖的建筑/物品已在 TakePrintFrom 补丁中从 mesh 移除，
+        /// 这里不需要额外的 section 级别排除。
         /// </summary>
-        public static void DrawLevelMapMesh(Map levelMap, LevelData level, int levelIndex = 0, HashSet<IntVec3> excludeCells = null)
+        public static void DrawLevelMapMesh(Map levelMap, LevelData level, int levelIndex = 0)
         {
             if (levelMap?.mapDrawer == null) return;
             if (sectionsField == null || layersField == null) return;
@@ -188,21 +189,6 @@ namespace MapLevelFramework.Render
                     if (section == null) continue;
                     if (!level.IsSectionActive(x, z)) continue;
 
-                    // 判断该 section 是否被高层完全覆盖（四角都在 excludeCells 中）
-                    bool sectionOccluded = false;
-                    if (excludeCells != null)
-                    {
-                        int minX = x * 17, minZ = z * 17;
-                        int maxX = minX + 16, maxZ = minZ + 16;
-                        // 限制在地图范围内
-                        if (maxX >= levelMap.Size.x) maxX = levelMap.Size.x - 1;
-                        if (maxZ >= levelMap.Size.z) maxZ = levelMap.Size.z - 1;
-                        sectionOccluded = excludeCells.Contains(new IntVec3(minX, 0, minZ))
-                                       && excludeCells.Contains(new IntVec3(maxX, 0, minZ))
-                                       && excludeCells.Contains(new IntVec3(minX, 0, maxZ))
-                                       && excludeCells.Contains(new IntVec3(maxX, 0, maxZ));
-                    }
-
                     List<SectionLayer> layers = layersField.GetValue(section) as List<SectionLayer>;
                     if (layers == null) continue;
 
@@ -212,8 +198,6 @@ namespace MapLevelFramework.Render
 
                         string layerName = layer.GetType().Name;
                         if (ShouldSkipLayer(layerName)) continue;
-                        // 被高层覆盖的 section：跳过建筑图层，只保留地形
-                        if (sectionOccluded && IsThingLayer(layerName)) continue;
 
                         foreach (LayerSubMesh subMesh in layer.subMeshes)
                         {
@@ -343,21 +327,6 @@ namespace MapLevelFramework.Render
                 case "SectionLayer_Darkness":
                 case "SectionLayer_LightingOverlay":
                 case "SectionLayer_Snow":
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        /// <summary>
-        /// 判断是否为建筑/物体图层（被高层覆盖时应跳过）。
-        /// </summary>
-        private static bool IsThingLayer(string layerName)
-        {
-            switch (layerName)
-            {
-                case "SectionLayer_ThingsGeneral":
-                case "SectionLayer_BuildingsDamage":
                     return true;
                 default:
                     return false;

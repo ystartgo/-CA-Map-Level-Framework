@@ -181,11 +181,14 @@ namespace MapLevelFramework
                 foreach (var lvl in ActiveRenderLevels)
                 {
                     MarkAreaSectionsDirty(lvl.area);
+                    // 同时 dirty 子地图的 section（恢复被跳过的建筑）
+                    MarkLevelMapSectionsDirty(lvl);
                 }
             }
             else if (old != 0 && levels.TryGetValue(old, out var oldLevel))
             {
                 MarkAreaSectionsDirty(oldLevel.area);
+                MarkLevelMapSectionsDirty(oldLevel);
             }
 
             focusedElevation = elevation;
@@ -209,6 +212,8 @@ namespace MapLevelFramework
                 foreach (var lvl in renderLevels)
                 {
                     MarkAreaSectionsDirty(lvl.area);
+                    // 同时 dirty 子地图的 section（让 TakePrintFrom 补丁跳过被覆盖的建筑）
+                    MarkLevelMapSectionsDirty(lvl);
                 }
             }
             else
@@ -240,6 +245,37 @@ namespace MapLevelFramework
                 if (cell.InBounds(map))
                 {
                     map.mapDrawer.MapMeshDirty(cell, dirtyFlags);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 标记子地图上可用区域内的 section 为脏，触发重新生成。
+        /// 这会导致子地图的 SectionLayer_ThingsGeneral 重新调用 TakePrintFrom，
+        /// 届时补丁会根据 IsCoveredByHigherLevel 决定是否跳过被覆盖的建筑/物品。
+        /// </summary>
+        private void MarkLevelMapSectionsDirty(LevelData level)
+        {
+            Map levelMap = level?.LevelMap;
+            if (levelMap?.mapDrawer == null) return;
+
+            ulong dirtyFlags = MapMeshFlagDefOf.Things | MapMeshFlagDefOf.Buildings
+                             | MapMeshFlagDefOf.BuildingsDamage;
+
+            if (level.usableCells != null)
+            {
+                foreach (IntVec3 cell in level.usableCells)
+                {
+                    if (cell.InBounds(levelMap))
+                        levelMap.mapDrawer.MapMeshDirty(cell, dirtyFlags);
+                }
+            }
+            else
+            {
+                foreach (IntVec3 cell in level.area)
+                {
+                    if (cell.InBounds(levelMap))
+                        levelMap.mapDrawer.MapMeshDirty(cell, dirtyFlags);
                 }
             }
         }
@@ -367,6 +403,36 @@ namespace MapLevelFramework
             return false;
         }
 
+        /// <summary>
+        /// 检查子地图上的某个格子是否被更高层级覆盖。
+        /// 用于 TakePrintFrom 补丁：中间层的建筑/物品在被高层覆盖时不应烘焙进 mesh。
+        /// </summary>
+        public static bool IsCoveredByHigherLevel(Map subMap, IntVec3 pos)
+        {
+            var renderLevels = ActiveRenderLevels;
+            if (renderLevels == null || renderLevels.Count < 2) return false;
+
+            // 找到该子地图对应的层级索引
+            int levelIdx = -1;
+            for (int i = 0; i < renderLevels.Count; i++)
+            {
+                if (renderLevels[i].LevelMap == subMap)
+                {
+                    levelIdx = i;
+                    break;
+                }
+            }
+            // 不在渲染列表中，或者是最高层（聚焦层）→ 不被覆盖
+            if (levelIdx < 0 || levelIdx >= renderLevels.Count - 1) return false;
+
+            // 检查是否被任何更高层级覆盖
+            for (int j = levelIdx + 1; j < renderLevels.Count; j++)
+            {
+                if (renderLevels[j].ContainsBaseMapCell(pos)) return true;
+            }
+            return false;
+        }
+
         // ========== 生命周期 ==========
 
         public override void FinalizeInit()
@@ -402,6 +468,7 @@ namespace MapLevelFramework
                 foreach (var lvl in renderLevels)
                 {
                     MarkAreaSectionsDirty(lvl.area);
+                    MarkLevelMapSectionsDirty(lvl);
                 }
             }
         }

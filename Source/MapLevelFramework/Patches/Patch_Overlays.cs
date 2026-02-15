@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using HarmonyLib;
+using RimWorld;
 using UnityEngine;
 using Verse;
 
@@ -22,8 +23,9 @@ namespace MapLevelFramework.Patches
         /// <summary>
         /// 聚焦层级且鼠标在任何可见层级区域内时，临时切换 Find.CurrentMap 到对应子地图。
         /// 优先使用最高层级（3F 区域用 3F，2F 阳台区域用 2F）。
+        /// 支持嵌套调用（swapDepth 计数器）。
         /// </summary>
-        private static void SwapToLevelMap()
+        internal static void SwapToLevelMap()
         {
             swapDepth++;
             if (swapDepth > 1) return; // 已经切换过了（嵌套调用）
@@ -47,7 +49,7 @@ namespace MapLevelFramework.Patches
             }
         }
 
-        private static void RestoreLevelMap()
+        internal static void RestoreLevelMap()
         {
             swapDepth--;
             if (swapDepth > 0) return;
@@ -89,6 +91,20 @@ namespace MapLevelFramework.Patches
         /// </summary>
         [HarmonyPatch(typeof(EnvironmentStatsDrawer), "DrawRoomOverlays")]
         public static class Patch_DrawRoomOverlays
+        {
+            public static void Prefix() => SwapToLevelMap();
+            public static void Finalizer() => RestoreLevelMap();
+        }
+
+        // ========== SelectionDrawer ==========
+
+        /// <summary>
+        /// SelectionDrawer.DrawSelectionOverlays 补丁 -
+        /// 聚焦层级时切换 Find.CurrentMap 到子地图，
+        /// 让 thing.DrawExtraSelectionOverlays() 等内部调用使用正确的地图。
+        /// </summary>
+        [HarmonyPatch(typeof(SelectionDrawer), "DrawSelectionOverlays")]
+        public static class Patch_SelectionDrawer
         {
             public static void Prefix() => SwapToLevelMap();
             public static void Finalizer() => RestoreLevelMap();

@@ -8,6 +8,7 @@ namespace MapLevelFramework.Patches
 {
     /// <summary>
     /// GenUI.TargetsAt 补丁 - 聚焦层级时，从子地图获取点击目标。
+    /// 使用 GetTopmostLevelAt 查询点击位置的最高可见层级。
     /// 同尺寸子地图方案：坐标一致，无需转换。
     /// </summary>
     [HarmonyPatch(typeof(GenUI), "TargetsAt")]
@@ -23,16 +24,14 @@ namespace MapLevelFramework.Patches
             var mgr = LevelManager.GetManager(baseMap);
             if (mgr == null || !mgr.IsFocusingLevel) return true;
 
-            var level = mgr.GetLevel(mgr.FocusedElevation);
-            if (level?.LevelMap == null) return true;
-
             IntVec3 cell = IntVec3Utility.ToIntVec3(clickPos);
-            if (!level.ContainsBaseMapCell(cell)) return true;
-            if (!cell.InBounds(level.LevelMap)) return true;
+            var topLevel = LevelManager.GetTopmostLevelAt(cell);
+            if (topLevel?.LevelMap == null) return true;
+            if (!cell.InBounds(topLevel.LevelMap)) return true;
 
             var results = new List<LocalTargetInfo>();
 
-            foreach (Thing thing in level.LevelMap.thingGrid.ThingsAt(cell))
+            foreach (Thing thing in topLevel.LevelMap.thingGrid.ThingsAt(cell))
             {
                 if (clickParams.CanTarget(thing, source))
                 {
@@ -42,7 +41,7 @@ namespace MapLevelFramework.Patches
 
             if (!thingsOnly && results.Count == 0)
             {
-                if (cell.Walkable(level.LevelMap))
+                if (cell.Walkable(topLevel.LevelMap))
                 {
                     results.Add(cell);
                 }

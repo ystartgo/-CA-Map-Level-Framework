@@ -9,6 +9,8 @@ namespace MapLevelFramework.Patches
 {
     /// <summary>
     /// Selector.SelectableObjectsUnderMouse 补丁 - 聚焦层级时，从子地图获取可选物体。
+    /// 使用 GetTopmostLevelAt 查询鼠标位置的最高可见层级，
+    /// 这样聚焦 3F 时也能选中 2F 阳台上的物体。
     /// 同尺寸子地图方案：坐标一致，无需转换。
     /// </summary>
     [HarmonyPatch(typeof(Selector), "SelectableObjectsUnderMouse")]
@@ -22,13 +24,12 @@ namespace MapLevelFramework.Patches
             var mgr = LevelManager.GetManager(baseMap);
             if (mgr == null || !mgr.IsFocusingLevel) return true;
 
-            var level = mgr.GetLevel(mgr.FocusedElevation);
-            if (level?.LevelMap == null) return true;
-
             Vector3 mousePos = UI.MouseMapPosition();
             IntVec3 cell = IntVec3Utility.ToIntVec3(mousePos);
 
-            if (!level.ContainsBaseMapCell(cell)) return true;
+            // 查询鼠标位置的最高可见层级
+            var level = LevelManager.GetTopmostLevelAt(cell);
+            if (level?.LevelMap == null) return true;
             if (!cell.InBounds(level.LevelMap)) return true;
 
             // 收集子地图上的可选物体（坐标一致，直接查询）

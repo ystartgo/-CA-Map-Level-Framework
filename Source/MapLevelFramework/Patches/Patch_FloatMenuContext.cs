@@ -8,6 +8,8 @@ namespace MapLevelFramework.Patches
 {
     /// <summary>
     /// FloatMenuMakerMap.GetOptions 补丁 - 聚焦层级时，重定向右键菜单到子地图。
+    /// 使用 GetTopmostLevelAt 查询点击位置的最高可见层级，
+    /// 这样聚焦 3F 时也能右键 2F 阳台上的物体。
     /// 同尺寸子地图方案：坐标一致，只需切换 currentMapIndex。
     /// </summary>
     [HarmonyPatch(typeof(FloatMenuMakerMap), "GetOptions",
@@ -27,14 +29,12 @@ namespace MapLevelFramework.Patches
             var mgr = LevelManager.GetManager(baseMap);
             if (mgr == null || !mgr.IsFocusingLevel) return;
 
-            var level = mgr.GetLevel(mgr.FocusedElevation);
-            if (level?.LevelMap == null) return;
-
             IntVec3 cell = IntVec3Utility.ToIntVec3(clickPos);
-            if (!level.ContainsBaseMapCell(cell)) return;
+            var topLevel = LevelManager.GetTopmostLevelAt(cell);
+            if (topLevel?.LevelMap == null) return;
 
             // 临时切换到子地图（坐标一致，无需转换 clickPos）
-            int subMapIndex = Find.Maps.IndexOf(level.LevelMap);
+            int subMapIndex = Find.Maps.IndexOf(topLevel.LevelMap);
             if (subMapIndex >= 0)
             {
                 savedMapIndex = Current.Game.currentMapIndex;

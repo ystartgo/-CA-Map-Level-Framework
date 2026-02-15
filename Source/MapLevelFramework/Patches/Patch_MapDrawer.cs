@@ -45,7 +45,7 @@ namespace MapLevelFramework.Patches
                 }
 
                 Render.LevelRenderer.UpdateLevelMapSections(level.LevelMap, level);
-                Render.LevelRenderer.DrawLevelMapMesh(level.LevelMap, level, i, excludeCells);
+                Render.LevelRenderer.DrawLevelMapMesh(level.LevelMap, level, i);
                 Render.LevelRenderer.DrawLevelDynamicThings(level.LevelMap, level, i, excludeCells);
                 Render.LevelRenderer.DrawLevelOverlays(level.LevelMap);
             }
