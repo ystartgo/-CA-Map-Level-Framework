@@ -41,13 +41,25 @@ namespace MapLevelFramework.Patches
 
         public static void Postfix(ref Job __result, JobGiver_GetRest __instance, Pawn pawn)
         {
-            if (__result != null) return;
             if (CrossLevelJobUtility.Scanning) return;
 
-            __result = CrossLevelJobUtility.TryCrossLevelScan(pawn, () =>
+            // 当前层找到了床的情况：检查 pawn 是否有自己的床在其他楼层
+            if (__result != null)
+            {
+                Building_Bed ownedBed = pawn.ownership?.OwnedBed;
+                // 没有自己的床，或自己的床就在当前层 → 不需要跨层
+                if (ownedBed == null || ownedBed.Map == pawn.Map)
+                    return;
+                // 自己的床在其他楼层 → 继续跨层扫描
+            }
+
+            Job crossResult = CrossLevelJobUtility.TryCrossLevelScan(pawn, () =>
             {
                 return (Job)method.Invoke(__instance, new object[] { pawn });
             });
+
+            if (crossResult != null)
+                __result = crossResult;
         }
     }
 
