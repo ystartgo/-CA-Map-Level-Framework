@@ -54,10 +54,11 @@ namespace MapLevelFramework
                 levelData.usableCells = new HashSet<IntVec3>();
             levelData.usableCells.Add(minedPos);
 
-            // 2. 铺泥地
+            // 2. 铺泥地 + 确保厚岩石顶（地下层始终在山体内）
             TerrainDef dirtFloor = DefDatabase<TerrainDef>.GetNamedSilentFail("MLF_DirtFloor");
             if (dirtFloor != null)
                 levelMap.terrainGrid.SetTerrain(minedPos, dirtFloor);
+            levelMap.roofGrid.SetRoof(minedPos, RoofDefOf.RoofRockThick);
 
             // 3. 在新暴露的邻居生成岩石（8方向，含斜对角）
             for (int i = 0; i < 8; i++)
@@ -65,6 +66,9 @@ namespace MapLevelFramework
                 IntVec3 neighbor = minedPos + GenAdj.AdjacentCells[i];
                 if (!neighbor.InBounds(levelMap)) continue;
                 if (levelData.usableCells.Contains(neighbor)) continue;
+
+                // 确保邻居也有厚岩石顶
+                levelMap.roofGrid.SetRoof(neighbor, RoofDefOf.RoofRockThick);
 
                 // 检查该位置是否已有不可通行建筑
                 if (neighbor.Impassable(levelMap)) continue;

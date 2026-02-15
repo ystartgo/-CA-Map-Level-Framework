@@ -60,6 +60,7 @@ namespace MapLevelFramework.Patches
             // 查找该格子上方的层级
             foreach (var level in mgr.AllLevels)
             {
+                if (level.isUnderground) continue; // 地下层不参与屋顶-地板同步
                 if (level.LevelMap == null) continue;
                 if (!level.ContainsBaseMapCell(hostCell)) continue;
 
@@ -121,6 +122,9 @@ namespace MapLevelFramework.Patches
             LevelData level;
             if (!LevelManager.IsLevelMap(levelMap, out manager, out level))
                 return;
+
+            // 地下层不参与屋顶-地板同步
+            if (level.isUnderground) return;
 
             Map hostMap = level.hostMap;
             if (hostMap == null) return;
