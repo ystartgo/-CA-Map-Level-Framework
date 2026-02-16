@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using HarmonyLib;
 using Verse;
 
@@ -13,6 +14,10 @@ namespace MapLevelFramework.Patches
     [HarmonyPatch(typeof(Map), nameof(Map.MapPreTick))]
     public static class Patch_MapPreTick
     {
+        // 清除 PathFinder.tmpCurrentWork 残留项，避免 ComputeWorkThisTick 内部的 Log.Error
+        private static readonly AccessTools.FieldRef<PathFinder, List<PathRequest>> tmpCurrentWorkRef =
+            AccessTools.FieldRefAccess<PathFinder, List<PathRequest>>("tmpCurrentWork");
+
         public static bool Prefix(Map __instance)
         {
             if (!(__instance.Parent is LevelMapParent))
@@ -50,6 +55,11 @@ namespace MapLevelFramework.Patches
 
             try
             {
+                // 清除 tmpCurrentWork 残留项，防止 ComputeWorkThisTick 内部 Log.Error
+                // （该错误是 Log.Error 非异常，try-catch 无法捕获）
+                var workList = tmpCurrentWorkRef(__instance.pathFinder);
+                if (workList != null && workList.Count > 0)
+                    workList.Clear();
                 __instance.pathFinder.PathFinderTick();
             }
             catch (Exception ex) { Log.ErrorOnce($"[MLF] PathFinderTick: {ex.Message}", __instance.uniqueID ^ 0x9CAD); }

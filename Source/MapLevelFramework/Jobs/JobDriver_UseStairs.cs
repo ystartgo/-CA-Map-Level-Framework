@@ -29,7 +29,10 @@ namespace MapLevelFramework
             Toil transfer = ToilMaker.MakeToil("MLF_Transfer");
             transfer.initAction = delegate
             {
-                if (StairTransferUtility.TryGetTransferTarget(Stairs, out Map destMap, out IntVec3 destPos))
+                Building_Stairs stairs = Stairs;
+                if (stairs == null) return;
+
+                if (StairTransferUtility.TryGetTransferTarget(stairs, out Map destMap, out IntVec3 destPos))
                 {
                     StairTransferUtility.TransferPawn(pawn, destMap, destPos);
 
@@ -53,7 +56,7 @@ namespace MapLevelFramework
                         // 延迟 job 失败 → 走楼梯回原来的楼层
                         if (!started)
                         {
-                            TryReturnToOrigin(pawn, Stairs);
+                            TryReturnToOrigin(pawn, stairs);
                         }
                     }
                 }
@@ -97,10 +100,12 @@ namespace MapLevelFramework
         /// </summary>
         private void TryReturnToOrigin(Pawn p, Building_Stairs arrivedFrom)
         {
-            // arrivedFrom 是出发层的楼梯，对应的目标层楼梯就在 pawn 当前位置附近
-            // 找当前地图上同位置/最近的楼梯走回去
-            Map currentMap = p.Map;
+            Map currentMap = p?.Map;
             if (currentMap == null) return;
+
+            // arrivedFrom 可能已 despawn（Map 为 null），此时无法判断来源层
+            // 退而求其次：找当前地图上最近的任意楼梯回去
+            Map originMap = arrivedFrom?.Map;
 
             var allStairs = currentMap.listerBuildings.AllBuildingsColonistOfClass<Building_Stairs>();
             Building_Stairs best = null;
@@ -108,9 +113,9 @@ namespace MapLevelFramework
             foreach (var s in allStairs)
             {
                 if (!s.Spawned) continue;
-                // 楼梯必须通往来的方向（即 arrivedFrom 所在的地图）
                 if (!StairTransferUtility.TryGetTransferTarget(s, out Map targetMap, out _)) continue;
-                if (targetMap != arrivedFrom.Map) continue;
+                // 如果知道来源地图，只找通往来源的楼梯；否则找任意楼梯
+                if (originMap != null && targetMap != originMap) continue;
 
                 float dist = s.Position.DistanceToSquared(p.Position);
                 if (dist < bestDist)
