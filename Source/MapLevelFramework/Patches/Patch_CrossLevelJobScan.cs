@@ -107,21 +107,24 @@ namespace MapLevelFramework.Patches
                 // 建造：蓝图和框架
                 if (canConstruct)
                 {
-                    Job job = TryFetchForConstruction(pawn, pawnMap, otherMap, targetElev);
+                    Job job = TryFetchForConstruction(pawn, pawnMap, otherMap, targetElev,
+                        otherMaps, currentElev);
                     if (job != null) return job;
                 }
 
                 // 加油：需要燃料的建筑
                 if (canHaul)
                 {
-                    Job job = TryFetchForRefuel(pawn, pawnMap, otherMap, targetElev);
+                    Job job = TryFetchForRefuel(pawn, pawnMap, otherMap, targetElev,
+                        otherMaps, currentElev);
                     if (job != null) return job;
                 }
 
                 // 制作/烹饪等：工作台 bill 需要的原料
                 if (canHaul)
                 {
-                    Job job = TryFetchForBill(pawn, pawnMap, otherMap, targetElev);
+                    Job job = TryFetchForBill(pawn, pawnMap, otherMap, targetElev,
+                        otherMaps, currentElev);
                     if (job != null) return job;
                 }
             }
@@ -146,27 +149,31 @@ namespace MapLevelFramework.Patches
 
         // ========== 建造 ==========
 
-        private static Job TryFetchForConstruction(Pawn pawn, Map pawnMap, Map targetMap, int targetElev)
+        private static Job TryFetchForConstruction(Pawn pawn, Map pawnMap, Map targetMap, int targetElev,
+            List<(Map map, int elevation)> otherMaps, int currentElev)
         {
             // 蓝图
             var blueprints = targetMap.listerThings.ThingsInGroup(ThingRequestGroup.Blueprint);
             for (int i = 0; i < blueprints.Count; i++)
             {
                 if (blueprints[i] is Blueprint_Install) continue;
-                Job job = TryFetchForConstructible(pawn, pawnMap, blueprints[i], targetElev);
+                Job job = TryFetchForConstructible(pawn, pawnMap, blueprints[i], targetElev,
+                    otherMaps, currentElev);
                 if (job != null) return job;
             }
             // 框架
             var frames = targetMap.listerThings.ThingsInGroup(ThingRequestGroup.BuildingFrame);
             for (int i = 0; i < frames.Count; i++)
             {
-                Job job = TryFetchForConstructible(pawn, pawnMap, frames[i], targetElev);
+                Job job = TryFetchForConstructible(pawn, pawnMap, frames[i], targetElev,
+                    otherMaps, currentElev);
                 if (job != null) return job;
             }
             return null;
         }
 
-        private static Job TryFetchForConstructible(Pawn pawn, Map pawnMap, Thing constructThing, int targetElev)
+        private static Job TryFetchForConstructible(Pawn pawn, Map pawnMap, Thing constructThing, int targetElev,
+            List<(Map map, int elevation)> otherMaps, int currentElev)
         {
             IConstructible c = constructThing as IConstructible;
             if (c == null) return null;
@@ -177,18 +184,25 @@ namespace MapLevelFramework.Patches
                 int needed = c.ThingCountNeeded(cost.thingDef);
                 if (needed <= 0) continue;
 
+                // 先找 pawn 当前层
                 Thing material = FindMaterialOnMap(pawn, pawnMap, cost.thingDef);
-                if (material == null) continue;
+                if (material != null)
+                    return MakeFetchJob(pawn, cost.thingDef, constructThing, targetElev,
+                        CrossLevelJobUtility.NeedType.Construction);
 
-                return MakeFetchJob(pawn, cost.thingDef, constructThing, targetElev,
-                    CrossLevelJobUtility.NeedType.Construction);
+                // 当前层没有 → 搜索其他层（三层情况）
+                Job revJob = TryFindMaterialOnOtherMaps(pawn, pawnMap, cost.thingDef,
+                    constructThing, targetElev, CrossLevelJobUtility.NeedType.Construction,
+                    otherMaps, currentElev);
+                if (revJob != null) return revJob;
             }
             return null;
         }
 
         // ========== 加油 ==========
 
-        private static Job TryFetchForRefuel(Pawn pawn, Map pawnMap, Map targetMap, int targetElev)
+        private static Job TryFetchForRefuel(Pawn pawn, Map pawnMap, Map targetMap, int targetElev,
+            List<(Map map, int elevation)> otherMaps, int currentElev)
         {
             var refuelables = targetMap.listerThings.ThingsInGroup(ThingRequestGroup.Refuelable);
             for (int i = 0; i < refuelables.Count; i++)
@@ -201,8 +215,9 @@ namespace MapLevelFramework.Patches
                 if (comp == null || comp.IsFull) continue;
                 if (!comp.allowAutoRefuel || !comp.ShouldAutoRefuelNow) continue;
 
-                // 找本层有没有合适的燃料
                 ThingFilter fuelFilter = comp.Props.fuelFilter;
+
+                // 先找 pawn 当前层
                 Thing fuel = GenClosest.ClosestThingReachable(
                     pawn.Position, pawnMap,
                     fuelFilter.BestThingRequest,
@@ -212,17 +227,33 @@ namespace MapLevelFramework.Patches
                     f => !f.IsForbidden(pawn) && pawn.CanReserve(f)
                          && fuelFilter.Allows(f));
 
-                if (fuel == null) continue;
+                if (fuel != null)
+                    return MakeFetchJob(pawn, fuel.def, t, targetElev,
+                        CrossLevelJobUtility.NeedType.Refuel);
 
-                return MakeFetchJob(pawn, fuel.def, t, targetElev,
-                    CrossLevelJobUtility.NeedType.Refuel);
+                // 当前层没有 → 搜索其他层（三层情况）
+                foreach (var (matMap, matElev) in otherMaps)
+                {
+                    if (matMap == targetMap) continue;
+                    Thing remoteFuel = FindThingByFilter(matMap, pawn, fuelFilter);
+                    if (remoteFuel == null) continue;
+
+                    int nextElev = matElev > currentElev ? currentElev + 1 : currentElev - 1;
+                    Building_Stairs stairs = CrossLevelJobUtility.FindStairsToElevation(
+                        pawn, pawnMap, nextElev);
+                    if (stairs == null) continue;
+
+                    return MakeReverseFetchJob(pawn, remoteFuel.def, t, targetElev,
+                        CrossLevelJobUtility.NeedType.Refuel, stairs);
+                }
             }
             return null;
         }
 
         // ========== 制作/烹饪 (DoBill) ==========
 
-        private static Job TryFetchForBill(Pawn pawn, Map pawnMap, Map targetMap, int targetElev)
+        private static Job TryFetchForBill(Pawn pawn, Map pawnMap, Map targetMap, int targetElev,
+            List<(Map map, int elevation)> otherMaps, int currentElev)
         {
             foreach (Building_WorkTable bench in targetMap.listerBuildings
                 .AllBuildingsColonistOfClass<Building_WorkTable>())
@@ -238,15 +269,31 @@ namespace MapLevelFramework.Patches
                     RecipeDef recipe = bill.recipe;
                     if (recipe.ingredients == null || recipe.ingredients.Count == 0) continue;
 
-                    // 找第一个本层有的原料
                     for (int i = 0; i < recipe.ingredients.Count; i++)
                     {
                         IngredientCount ing = recipe.ingredients[i];
+
+                        // 先找 pawn 当前层
                         Thing found = FindIngredientOnMap(pawn, pawnMap, ing, bill);
                         if (found != null)
-                        {
                             return MakeFetchJob(pawn, found.def, bench, targetElev,
                                 CrossLevelJobUtility.NeedType.Bill);
+
+                        // 当前层没有 → 搜索其他层（三层情况）
+                        foreach (var (matMap, matElev) in otherMaps)
+                        {
+                            if (matMap == targetMap) continue;
+                            Thing remoteIng = FindIngredientByFilter(matMap, pawn, ing, bill);
+                            if (remoteIng == null) continue;
+
+                            int nextElev = matElev > currentElev
+                                ? currentElev + 1 : currentElev - 1;
+                            Building_Stairs stairs = CrossLevelJobUtility.FindStairsToElevation(
+                                pawn, pawnMap, nextElev);
+                            if (stairs == null) continue;
+
+                            return MakeReverseFetchJob(pawn, remoteIng.def, bench, targetElev,
+                                CrossLevelJobUtility.NeedType.Bill, stairs);
                         }
                     }
                 }
@@ -369,6 +416,43 @@ namespace MapLevelFramework.Patches
                 TraverseParms.For(pawn),
                 9999f,
                 t => !t.IsForbidden(pawn) && pawn.CanReserve(t) && t.stackCount > 0);
+        }
+
+        /// <summary>
+        /// 在其他层地图上按 ThingDef 查找物品（不检查可达性，到达后再检查）。
+        /// </summary>
+        private static Thing FindThingOnOtherMap(Map map, Pawn pawn, ThingDef thingDef)
+        {
+            List<Thing> things = map.listerThings.ThingsOfDef(thingDef);
+            for (int i = 0; i < things.Count; i++)
+            {
+                if (!things[i].IsForbidden(pawn) && things[i].stackCount > 0)
+                    return things[i];
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 三层通用：在 otherMaps 中搜索材料（按 ThingDef），找到后创建反向取材 job。
+        /// </summary>
+        private static Job TryFindMaterialOnOtherMaps(Pawn pawn, Map pawnMap, ThingDef thingDef,
+            Thing target, int needElev, CrossLevelJobUtility.NeedType needType,
+            List<(Map map, int elevation)> otherMaps, int currentElev)
+        {
+            foreach (var (matMap, matElev) in otherMaps)
+            {
+                if (matMap == target.Map) continue; // 跳过需求层
+                Thing remoteMat = FindThingOnOtherMap(matMap, pawn, thingDef);
+                if (remoteMat == null) continue;
+
+                int nextElev = matElev > currentElev ? currentElev + 1 : currentElev - 1;
+                Building_Stairs stairs = CrossLevelJobUtility.FindStairsToElevation(
+                    pawn, pawnMap, nextElev);
+                if (stairs == null) continue;
+
+                return MakeReverseFetchJob(pawn, thingDef, target, needElev, needType, stairs);
+            }
+            return null;
         }
 
         private static Job MakeFetchJob(Pawn pawn, ThingDef materialDef, Thing target,
