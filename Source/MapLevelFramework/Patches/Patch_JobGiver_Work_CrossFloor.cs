@@ -263,18 +263,64 @@ namespace MapLevelFramework.CrossFloor
 
         private static bool FloorHasWork(Map map)
         {
+            // 建造（蓝图、框架）
             if (map.listerThings.ThingsInGroup(
                     ThingRequestGroup.Blueprint).Count > 0)
                 return true;
             if (map.listerThings.ThingsInGroup(
                     ThingRequestGroup.BuildingFrame).Count > 0)
                 return true;
+
+            // 搬运
             if (map.listerHaulables
                     .ThingsPotentiallyNeedingHauling().Count > 0)
                 return true;
+
+            // 清洁
             var filthLister = map.listerFilthInHomeArea;
             if (filthLister != null
                 && filthLister.FilthInHomeArea.Count > 0)
+                return true;
+
+            // 医疗：倒地或需要治疗的殖民者
+            var colonists = map.mapPawns.FreeColonistsSpawned;
+            for (int i = 0; i < colonists.Count; i++)
+            {
+                Pawn p = colonists[i];
+                if (p.Downed || (p.health?.HasHediffsNeedingTend(false) ?? false))
+                    return true;
+            }
+
+            // 监管：有囚犯
+            if (map.mapPawns.PrisonersOfColonySpawned.Count > 0)
+                return true;
+
+            // 工作指示（开采、割除、狩猎、驯服、打磨等）
+            if (HasAnyDesignation(map, DesignationDefOf.Mine)
+                || HasAnyDesignation(map, DesignationDefOf.Deconstruct)
+                || HasAnyDesignation(map, DesignationDefOf.CutPlant)
+                || HasAnyDesignation(map, DesignationDefOf.HarvestPlant)
+                || HasAnyDesignation(map, DesignationDefOf.Hunt)
+                || HasAnyDesignation(map, DesignationDefOf.Tame)
+                || HasAnyDesignation(map, DesignationDefOf.SmoothFloor)
+                || HasAnyDesignation(map, DesignationDefOf.SmoothWall))
+                return true;
+
+            // 灭火
+            if (map.listerThings.ThingsOfDef(ThingDefOf.Fire).Count > 0)
+                return true;
+
+            // 研究：有研究台且有进行中的研究
+            if (Find.ResearchManager?.GetProject() != null
+                && map.listerBuildings.ColonistsHaveResearchBench())
+                return true;
+
+            return false;
+        }
+
+        private static bool HasAnyDesignation(Map map, DesignationDef def)
+        {
+            foreach (var _ in map.designationManager.SpawnedDesignationsOfDef(def))
                 return true;
             return false;
         }
