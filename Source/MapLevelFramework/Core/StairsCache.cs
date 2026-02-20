@@ -79,5 +79,21 @@ namespace MapLevelFramework
         {
             cache.Clear();
         }
+
+        /// <summary>
+        /// 获取指定地图上的所有楼梯（不区分目标 elevation）。
+        /// </summary>
+        public static List<Building_Stairs> GetAllStairsOnMap(Map map)
+        {
+            if (map == null) return null;
+            if (!cache.TryGetValue(map.uniqueID, out var byElev)) return null;
+
+            var result = new List<Building_Stairs>();
+            foreach (var list in byElev.Values)
+            {
+                result.AddRange(list);
+            }
+            return result;
+        }
     }
 }

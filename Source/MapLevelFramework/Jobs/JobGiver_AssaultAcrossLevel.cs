@@ -1,8 +1,8 @@
 using System.Collections.Generic;
-using System.Linq;
 using RimWorld;
 using Verse;
 using Verse.AI;
+using MapLevelFramework.CrossFloor;
 
 namespace MapLevelFramework
 {
@@ -15,12 +15,12 @@ namespace MapLevelFramework
         protected override Job TryGiveJob(Pawn pawn)
         {
             if (pawn?.Map == null || !pawn.Spawned) return null;
-            if (CrossLevelJobUtility.Scanning) return null;
 
             Map pawnMap = pawn.Map;
+            if (!pawnMap.IsPartOfFloorSystem()) return null;
+
             LevelManager mgr;
             Map baseMap;
-
             if (LevelManager.IsLevelMap(pawnMap, out var parentMgr, out _))
             {
                 mgr = parentMgr;
@@ -37,7 +37,7 @@ namespace MapLevelFramework
             // 先检查当前地图是否有可攻击目标（有的话不跨层）
             if (HasHostileTargets(pawn, pawnMap)) return null;
 
-            int currentElev = CrossLevelJobUtility.GetMapElevation(pawnMap, mgr, baseMap);
+            int currentElev = FloorMapUtility.GetMapElevation(pawnMap);
 
             // 收集有殖民者的其他楼层，按距离排序
             var otherMaps = new List<(Map map, int elevation)>();
@@ -63,7 +63,7 @@ namespace MapLevelFramework
                     ? currentElev + 1
                     : currentElev - 1;
 
-                Building_Stairs stairs = CrossLevelJobUtility.FindStairsToElevation(pawn, pawnMap, nextElev);
+                Building_Stairs stairs = FloorMapUtility.FindStairsToElevation(pawn, pawnMap, nextElev);
                 if (stairs != null)
                 {
                     return JobMaker.MakeJob(MLF_JobDefOf.MLF_UseStairs, stairs);
@@ -73,16 +73,11 @@ namespace MapLevelFramework
             return null;
         }
 
-        /// <summary>
-        /// 检查地图上是否有该 pawn 的敌对目标（殖民者、友方 pawn、炮塔等）。
-        /// </summary>
         private bool HasHostileTargets(Pawn pawn, Map map)
         {
-            // 检查殖民者
             if (map.mapPawns.FreeColonistsSpawnedCount > 0)
                 return true;
 
-            // 检查友方非殖民者 pawn（盟友等）
             foreach (var p in map.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer))
             {
                 if (p.Spawned) return true;

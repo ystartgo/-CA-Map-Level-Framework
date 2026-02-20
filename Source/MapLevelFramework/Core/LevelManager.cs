@@ -649,6 +649,10 @@ namespace MapLevelFramework
                     }
                 }
             }
+
+            // 清除跨层工作冷却记录
+            CrossFloor.Patch_JobGiver_Work_CrossFloor.ClearCooldowns();
+            CrossFloor.CrossFloorReachabilityUtility.ClearCache();
         }
 
         public override void MapComponentOnGUI()

@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using Verse;
 using Verse.AI;
@@ -25,7 +24,7 @@ namespace MapLevelFramework
             // 走到楼梯
             yield return Toils_Goto.GotoThing(TargetIndex.A, PathEndMode.OnCell);
 
-            // 转移到目标地图并恢复延迟 job
+            // 转移到目标地图
             Toil transfer = ToilMaker.MakeToil("MLF_Transfer");
             transfer.initAction = delegate
             {
@@ -35,108 +34,10 @@ namespace MapLevelFramework
                 if (StairTransferUtility.TryGetTransferTarget(stairs, out Map destMap, out IntVec3 destPos))
                 {
                     StairTransferUtility.TransferPawn(pawn, destMap, destPos);
-
-                    // 恢复跨层扫描时找到的 job
-                    if (CrossLevelJobUtility.TryPopDeferredJob(pawn, out Job deferredJob))
-                    {
-                        bool started = false;
-                        if (ValidateDeferredJob(deferredJob, destMap))
-                        {
-                            try
-                            {
-                                pawn.jobs.StartJob(deferredJob, JobCondition.None, null, false, true);
-                                started = true;
-                            }
-                            catch (Exception ex)
-                            {
-                                Log.Warning($"[MLF] 延迟 job 启动失败: {ex.Message}");
-                            }
-                        }
-
-                        // 延迟 job 失败 → 走楼梯回原来的楼层
-                        if (!started)
-                        {
-                            TryReturnToOrigin(pawn, stairs);
-                        }
-                    }
                 }
             };
             transfer.defaultCompleteMode = ToilCompleteMode.Instant;
             yield return transfer;
-        }
-
-        /// <summary>
-        /// 验证延迟 job 的目标在目标地图上仍然有效。
-        /// 扫描和实际转移之间可能经过多个 tick，目标可能已被销毁/移动。
-        /// </summary>
-        private bool ValidateDeferredJob(Job job, Map destMap)
-        {
-            if (job == null) return false;
-
-            // 检查 thing 目标是否仍然 spawned、在正确的地图上、且可预约
-            for (int i = 0; i < 3; i++)
-            {
-                LocalTargetInfo target = i switch
-                {
-                    0 => job.targetA,
-                    1 => job.targetB,
-                    _ => job.targetC
-                };
-                if (target.HasThing && target.Thing != null)
-                {
-                    if (!target.Thing.Spawned || target.Thing.Map != destMap)
-                        return false;
-                    // 检查是否已被其他 pawn 预约（避免多人抢同一物品）
-                    if (!pawn.CanReserve(target.Thing))
-                        return false;
-                }
-            }
-            return true;
-        }
-
-        /// <summary>
-        /// 延迟 job 失败时，找到回去的楼梯让 pawn 走回原来的楼层。
-        /// 楼梯是双向的：用来的那个楼梯反向走就能回去。
-        /// </summary>
-        private void TryReturnToOrigin(Pawn p, Building_Stairs arrivedFrom)
-        {
-            Map currentMap = p?.Map;
-            if (currentMap == null) return;
-
-            // arrivedFrom 可能已 despawn（Map 为 null），此时无法判断来源层
-            // 退而求其次：找当前地图上最近的任意楼梯回去
-            Map originMap = arrivedFrom?.Map;
-
-            var allStairs = currentMap.listerBuildings.AllBuildingsColonistOfClass<Building_Stairs>();
-            Building_Stairs best = null;
-            float bestDist = float.MaxValue;
-            foreach (var s in allStairs)
-            {
-                if (!s.Spawned) continue;
-                if (!StairTransferUtility.TryGetTransferTarget(s, out Map targetMap, out _)) continue;
-                // 如果知道来源地图，只找通往来源的楼梯；否则找任意楼梯
-                if (originMap != null && targetMap != originMap) continue;
-
-                float dist = s.Position.DistanceToSquared(p.Position);
-                if (dist < bestDist)
-                {
-                    best = s;
-                    bestDist = dist;
-                }
-            }
-
-            if (best != null)
-            {
-                try
-                {
-                    Job returnJob = JobMaker.MakeJob(MLF_JobDefOf.MLF_UseStairs, best);
-                    p.jobs.StartJob(returnJob, JobCondition.None, null, false, true);
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning($"[MLF] 返回原楼层失败: {ex.Message}");
-                }
-            }
         }
     }
 }
