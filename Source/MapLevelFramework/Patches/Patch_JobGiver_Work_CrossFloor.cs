@@ -12,7 +12,7 @@ namespace MapLevelFramework.CrossFloor
     /// 当 pawn 在当前楼层找不到工作时，按优先级：
     ///   P1: 本层有材料，其他层蓝图需要 → HaulToStairs（搬到楼梯传送）
     ///   P2: 本层有蓝图缺材料，其他层有材料 → UseStairs 去取
-    ///   P3: 本层无工作，其他层有 → UseStairs 过去
+    ///   P3: 本层无工作，其他层有 → UseStairs 过去（带意图）
     /// </summary>
     [HarmonyPatch(typeof(JobGiver_Work), nameof(JobGiver_Work.TryIssueJobPackage))]
     public static class Patch_JobGiver_Work_CrossFloor
@@ -176,7 +176,7 @@ namespace MapLevelFramework.CrossFloor
 
         /// <summary>
         /// P3: 本层无工作 → 去有工作的最近楼层。
-        /// FloorHasWork 按 pawn 的工作设置过滤，不会白跑。
+        /// 尝试找到具体工作目标并设置意图，到达后直接执行。
         /// </summary>
         private static Job TryCreateGoToWorkFloorJob(Pawn pawn, Map pawnMap)
         {
@@ -184,11 +184,14 @@ namespace MapLevelFramework.CrossFloor
             Map bestFloor = null;
             int bestElevDist = int.MaxValue;
             int bestElev = 0;
+            Thing bestTarget = null;
 
             foreach (Map otherMap in pawnMap.BaseMapAndFloorMaps())
             {
                 if (otherMap == pawnMap) continue;
-                if (!FloorHasWork(otherMap, pawn)) continue;
+
+                Thing workTarget = FindFirstWorkTarget(otherMap, pawn);
+                if (workTarget == null && !FloorHasWork(otherMap, pawn)) continue;
 
                 int otherElev = FloorMapUtility.GetMapElevation(otherMap);
                 int dist = Math.Abs(otherElev - currentElev);
@@ -197,6 +200,7 @@ namespace MapLevelFramework.CrossFloor
                     bestElevDist = dist;
                     bestFloor = otherMap;
                     bestElev = otherElev;
+                    bestTarget = workTarget;
                 }
             }
 
@@ -207,9 +211,123 @@ namespace MapLevelFramework.CrossFloor
                 FloorMapUtility.FindStairsToFloor(pawn, pawnMap, bestElev);
             if (stairs == null) return null;
 
+            // 设置意图（如果找到了具体目标）
+            if (bestTarget != null)
+            {
+                CrossFloorIntent.Set(pawn,
+                    bestFloor.uniqueID,
+                    bestTarget.Position,
+                    bestTarget.def);
+                LogPJ(pawn, $"P3: 设置意图 → {bestTarget.LabelShort} at {bestTarget.Position}");
+            }
+
             Job job = JobMaker.MakeJob(MLF_JobDefOf.MLF_UseStairs, stairs);
             job.targetB = new IntVec3(bestElev, 0, 0);
             return job;
+        }
+
+        /// <summary>
+        /// 在目标楼层找到第一个具体的工作目标 Thing。
+        /// 用于设置意图，到达后直接执行而不是让原版重新随机扫描。
+        /// 返回 null 表示有工作但无法确定具体 Thing（如研究）。
+        /// </summary>
+        private static Thing FindFirstWorkTarget(Map map, Pawn pawn)
+        {
+            var ws = pawn.workSettings;
+            if (ws == null) return null;
+
+            // 建造（蓝图优先，然后框架）
+            if (ws.WorkIsActive(WorkTypeDefOf.Construction))
+            {
+                Thing t = FirstSpawnedThing(map, ThingRequestGroup.Blueprint);
+                if (t != null) return t;
+                t = FirstSpawnedThing(map, ThingRequestGroup.BuildingFrame);
+                if (t != null) return t;
+            }
+
+            // 搬运
+            if (ws.WorkIsActive(WorkTypeDefOf.Hauling))
+            {
+                var haulables = map.listerHaulables.ThingsPotentiallyNeedingHauling();
+                if (haulables.Count > 0)
+                {
+                    foreach (Thing h in haulables) return h;
+                }
+            }
+
+            // 清洁
+            if (ws.WorkIsActive(WorkTypeDefOf.Cleaning))
+            {
+                var filth = map.listerFilthInHomeArea?.FilthInHomeArea;
+                if (filth != null && filth.Count > 0) return filth[0];
+            }
+
+            // 开采（从 designation 获取 Thing）
+            if (ws.WorkIsActive(WorkTypeDefOf.Mining))
+            {
+                Thing t = FirstDesignationTarget(map, DesignationDefOf.Mine);
+                if (t != null) return t;
+            }
+
+            // 拆除/打磨
+            if (ws.WorkIsActive(WorkTypeDefOf.Construction))
+            {
+                Thing t = FirstDesignationTarget(map, DesignationDefOf.Deconstruct);
+                if (t != null) return t;
+            }
+
+            // 割除/收获
+            if (ws.WorkIsActive(WorkTypeDefOf.PlantCutting))
+            {
+                Thing t = FirstDesignationTarget(map, DesignationDefOf.CutPlant);
+                if (t != null) return t;
+                t = FirstDesignationTarget(map, DesignationDefOf.HarvestPlant);
+                if (t != null) return t;
+            }
+
+            // 狩猎
+            if (ws.WorkIsActive(WorkTypeDefOf.Hunting))
+            {
+                Thing t = FirstDesignationTarget(map, DesignationDefOf.Hunt);
+                if (t != null) return t;
+            }
+
+            // 驯服
+            if (ws.WorkIsActive(WorkTypeDefOf.Handling))
+            {
+                Thing t = FirstDesignationTarget(map, DesignationDefOf.Tame);
+                if (t != null) return t;
+            }
+
+            // 灭火
+            if (ws.WorkIsActive(WorkTypeDefOf.Firefighter))
+            {
+                var fires = map.listerThings.ThingsOfDef(ThingDefOf.Fire);
+                if (fires.Count > 0) return fires[0];
+            }
+
+            // 研究、医疗、监管等 → 无法确定具体 Thing，返回 null
+            return null;
+        }
+
+        private static Thing FirstSpawnedThing(Map map, ThingRequestGroup group)
+        {
+            var things = map.listerThings.ThingsInGroup(group);
+            for (int i = 0; i < things.Count; i++)
+            {
+                if (things[i].Spawned) return things[i];
+            }
+            return null;
+        }
+
+        private static Thing FirstDesignationTarget(Map map, DesignationDef def)
+        {
+            foreach (Designation d in map.designationManager.SpawnedDesignationsOfDef(def))
+            {
+                if (d.target.HasThing && d.target.Thing.Spawned)
+                    return d.target.Thing;
+            }
+            return null;
         }
 
         // ========== 材料需求收集系统 ==========
