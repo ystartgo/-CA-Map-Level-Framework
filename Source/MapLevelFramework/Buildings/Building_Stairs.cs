@@ -356,7 +356,8 @@ namespace MapLevelFramework
 
         /// <summary>
         /// 在子地图的指定位置放置楼梯（如果该位置还没有楼梯）。
-        /// 自动生成的楼梯指向回来的方向。
+        /// 自动生成的楼梯继续延伸方向：上楼梯 → targetElevation+1，下楼梯 → targetElevation-1。
+        /// 这样玩家可以通过 Gizmo 按钮继续创建更高/更低的层级，一个楼梯井通全层。
         /// </summary>
         private void SpawnStairsOnLevel(Map levelMap, IntVec3 pos)
         {
@@ -369,14 +370,13 @@ namespace MapLevelFramework
                 if (things[i] is Building_Stairs) return;
             }
 
-            // 自动生成的楼梯方向与当前楼梯相反
-            // 当前是下楼梯 → 子地图上生成上楼梯（回到上层）
-            // 当前是上楼梯 → 子地图上生成下楼梯（回到下层）... 不对，上楼梯的子地图楼梯也是回来
-            // 统一逻辑：自动生成的楼梯 targetElevation = 当前楼梯所在层
-            var stairsDef = this.def; // 使用相同的 def（视觉一致）
+            var stairsDef = this.def;
             var stairs = (Building_Stairs)ThingMaker.MakeThing(stairsDef, this.Stuff);
             stairs.autoSpawned = true;
-            stairs.targetElevation = GetCurrentElevation();
+            // 继续延伸：指向下一层（不是指回源层）
+            // 上楼梯：targetElevation 已经是当前新层的 elevation，下一层 = elevation + 1
+            // 下楼梯：下一层 = elevation - 1
+            stairs.targetElevation = GoesDown ? targetElevation - 1 : targetElevation + 1;
             GenSpawn.Spawn(stairs, pos, levelMap);
         }
 

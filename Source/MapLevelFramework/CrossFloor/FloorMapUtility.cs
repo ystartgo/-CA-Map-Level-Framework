@@ -153,11 +153,23 @@ namespace MapLevelFramework.CrossFloor
         /// </summary>
         public static Building_Stairs FindStairsToFloor(Pawn pawn, Map pawnMap, int targetElevation)
         {
+            bool debug = MapLevelFrameworkMod.Settings?.debugPathfindingAndJob ?? false;
+
             Map targetMap = GetMapForElevation(pawnMap, targetElevation);
-            if (targetMap == null || targetMap == pawnMap) return null;
+            if (targetMap == null || targetMap == pawnMap)
+            {
+                if (debug) Log.Message($"【MLF】FindStairsToFloor: targetMap={targetMap?.uniqueID.ToString() ?? "null"}, pawnMap={pawnMap.uniqueID}, targetElev={targetElevation} → 失败(targetMap无效)");
+                return null;
+            }
 
             var allStairs = StairsCache.GetAllStairsOnMap(pawnMap);
-            if (allStairs == null || allStairs.Count == 0) return null;
+            if (allStairs == null || allStairs.Count == 0)
+            {
+                if (debug) Log.Message($"【MLF】FindStairsToFloor: pawnMap={pawnMap.uniqueID} 无楼梯");
+                return null;
+            }
+
+            if (debug) Log.Message($"【MLF】FindStairsToFloor: pawnMap(elev={GetMapElevation(pawnMap)})→targetElev={targetElevation}, targetMap={targetMap.uniqueID}, 本层楼梯数={allStairs.Count}");
 
             Building_Stairs best = null;
             float bestDist = float.MaxValue;
@@ -167,8 +179,10 @@ namespace MapLevelFramework.CrossFloor
                 var s = allStairs[i];
                 if (!s.Spawned) continue;
 
-                // 目标楼层同位置必须也有楼梯（楼梯井连通）
-                if (!HasStairsAtPosition(targetMap, s.Position)) continue;
+                bool hasAtTarget = HasStairsAtPosition(targetMap, s.Position);
+                if (debug) Log.Message($"【MLF】  楼梯[{i}] pos={s.Position} targetElev={s.targetElevation} → 目标层同位置有楼梯={hasAtTarget}");
+
+                if (!hasAtTarget) continue;
 
                 if (!pawn.CanReach(s, PathEndMode.OnCell, Danger.Deadly)) continue;
 
@@ -180,6 +194,7 @@ namespace MapLevelFramework.CrossFloor
                 }
             }
 
+            if (debug) Log.Message($"【MLF】FindStairsToFloor: 结果={best?.Position.ToString() ?? "null"}");
             return best;
         }
     }

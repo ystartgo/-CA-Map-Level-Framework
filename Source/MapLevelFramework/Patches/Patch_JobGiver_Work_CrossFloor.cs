@@ -41,7 +41,6 @@ namespace MapLevelFramework.CrossFloor
             JobGiver_Work __instance,
             Pawn pawn)
         {
-            if (__result.Job != null) return;
             if (__instance.emergency) return;
 
             Map pawnMap = pawn?.Map;
@@ -54,10 +53,27 @@ namespace MapLevelFramework.CrossFloor
             if (lastCrossFloorTick.TryGetValue(pawn.thingIDNumber, out int lastTick)
                 && curTick - lastTick < CooldownTicks)
             {
-                LogPJ(pawn, $"在{ElevLabel(pawnElev)}，冷却中({curTick - lastTick}/{CooldownTicks})，跳过");
                 return;
             }
 
+            // ===== 本层有工作：检查其他层是否有更高优先级的 =====
+            if (__result.Job != null)
+            {
+                int localPri = GetJobPriority(pawn, __result.Job);
+                if (localPri <= 1) return; // 已是最高优先级，不用比
+
+                Job betterJob = TryFindHigherPriorityWork(pawn, pawnMap, localPri);
+                if (betterJob != null)
+                {
+                    int destElev = betterJob.targetB.IsValid ? betterJob.targetB.Cell.x : -999;
+                    LogPJ(pawn, $"本层有工作(pri={localPri})，但{ElevLabel(destElev)}有更高优先级工作→跨层");
+                    lastCrossFloorTick[pawn.thingIDNumber] = curTick;
+                    __result = new ThinkResult(betterJob, __instance, null, false);
+                }
+                return;
+            }
+
+            // ===== 本层无工作：跨层扫描 =====
             LogPJ(pawn, $"在{ElevLabel(pawnElev)}，本层无工作，开始跨层扫描");
 
             // P1: 本层材料 → 其他层蓝图需要 → HaulToStairs
@@ -93,6 +109,161 @@ namespace MapLevelFramework.CrossFloor
             }
 
             LogPJ(pawn, "P1/P2/P3均未命中，无跨层工作");
+            // 扫描完毕，设置冷却（即使没找到，也避免频繁扫描）
+            lastCrossFloorTick[pawn.thingIDNumber] = curTick;
+        }
+
+        // ========== 优先级比较 ==========
+
+        /// <summary>
+        /// 获取 job 对应的工作优先级（1=最高，4=最低）。
+        /// </summary>
+        private static int GetJobPriority(Pawn pawn, Job job)
+        {
+            if (job?.workGiverDef?.workType == null) return 4;
+            if (pawn.workSettings == null) return 4;
+            return pawn.workSettings.GetPriority(job.workGiverDef.workType);
+        }
+
+        /// <summary>
+        /// 在其他楼层找比 localPriority 更高优先级的工作。
+        /// 返回 UseStairs job（带意图），或 null。
+        /// </summary>
+        private static Job TryFindHigherPriorityWork(Pawn pawn, Map pawnMap, int localPriority)
+        {
+            var ws = pawn.workSettings;
+            if (ws == null) return null;
+
+            int bestElev = 0;
+            Map bestFloor = null;
+            Thing bestTarget = null;
+            int bestPri = localPriority; // 要找比这个更高（数字更小）的
+
+            foreach (Map otherMap in pawnMap.BaseMapAndFloorMaps())
+            {
+                if (otherMap == pawnMap) continue;
+
+                // 遍历工作类型，只看优先级比本层当前 job 更高的
+                Thing target = FindWorkWithPriorityBetterThan(otherMap, pawn, bestPri);
+                if (target == null) continue;
+
+                int otherElev = FloorMapUtility.GetMapElevation(otherMap);
+                // 找到了更高优先级的工作
+                bestFloor = otherMap;
+                bestElev = otherElev;
+                bestTarget = target;
+                // 继续找，可能有更高优先级的
+            }
+
+            if (bestFloor == null) return null;
+
+            Building_Stairs stairs = FloorMapUtility.FindStairsToFloor(pawn, pawnMap, bestElev);
+            if (stairs == null) return null;
+
+            if (bestTarget != null)
+            {
+                CrossFloorIntent.Set(pawn, bestFloor.uniqueID, bestTarget.Position, bestTarget.def);
+            }
+
+            Job job = JobMaker.MakeJob(MLF_JobDefOf.MLF_UseStairs, stairs);
+            job.targetB = new IntVec3(bestElev, 0, 0);
+            return job;
+        }
+
+        /// <summary>
+        /// 在指定地图上找优先级比 maxPri 更高（数字更小）的工作目标。
+        /// </summary>
+        private static Thing FindWorkWithPriorityBetterThan(Map map, Pawn pawn, int maxPri)
+        {
+            var ws = pawn.workSettings;
+
+            // 按优先级从高到低检查各工作类型
+            // 消防 pri=1 通常
+            if (CheckWorkType(ws, WorkTypeDefOf.Firefighter, maxPri))
+            {
+                var fires = map.listerThings.ThingsOfDef(ThingDefOf.Fire);
+                if (fires.Count > 0) return fires[0];
+            }
+
+            // 医疗
+            if (CheckWorkType(ws, WorkTypeDefOf.Doctor, maxPri))
+            {
+                var colonists = map.mapPawns.FreeColonistsSpawned;
+                for (int i = 0; i < colonists.Count; i++)
+                {
+                    if (colonists[i].Downed || (colonists[i].health?.HasHediffsNeedingTend(false) ?? false))
+                        return colonists[i]; // pawn 也是 Thing
+                }
+            }
+
+            // 建造
+            if (CheckWorkType(ws, WorkTypeDefOf.Construction, maxPri))
+            {
+                Thing t = FirstSpawnedThing(map, ThingRequestGroup.Blueprint);
+                if (t != null) return t;
+                t = FirstSpawnedThing(map, ThingRequestGroup.BuildingFrame);
+                if (t != null) return t;
+                t = FirstDesignationTarget(map, DesignationDefOf.Deconstruct);
+                if (t != null) return t;
+            }
+
+            // 搬运
+            if (CheckWorkType(ws, WorkTypeDefOf.Hauling, maxPri))
+            {
+                var haulables = map.listerHaulables.ThingsPotentiallyNeedingHauling();
+                if (haulables.Count > 0)
+                {
+                    foreach (Thing h in haulables) return h;
+                }
+            }
+
+            // 清洁
+            if (CheckWorkType(ws, WorkTypeDefOf.Cleaning, maxPri))
+            {
+                var filth = map.listerFilthInHomeArea?.FilthInHomeArea;
+                if (filth != null && filth.Count > 0) return filth[0];
+            }
+
+            // 开采
+            if (CheckWorkType(ws, WorkTypeDefOf.Mining, maxPri))
+            {
+                Thing t = FirstDesignationTarget(map, DesignationDefOf.Mine);
+                if (t != null) return t;
+            }
+
+            // 割除/收获
+            if (CheckWorkType(ws, WorkTypeDefOf.PlantCutting, maxPri))
+            {
+                Thing t = FirstDesignationTarget(map, DesignationDefOf.CutPlant);
+                if (t != null) return t;
+                t = FirstDesignationTarget(map, DesignationDefOf.HarvestPlant);
+                if (t != null) return t;
+            }
+
+            // 狩猎
+            if (CheckWorkType(ws, WorkTypeDefOf.Hunting, maxPri))
+            {
+                Thing t = FirstDesignationTarget(map, DesignationDefOf.Hunt);
+                if (t != null) return t;
+            }
+
+            // 驯服
+            if (CheckWorkType(ws, WorkTypeDefOf.Handling, maxPri))
+            {
+                Thing t = FirstDesignationTarget(map, DesignationDefOf.Tame);
+                if (t != null) return t;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 检查 pawn 是否启用了该工作类型，且优先级比 maxPri 更高（数字更小）。
+        /// </summary>
+        private static bool CheckWorkType(Pawn_WorkSettings ws, WorkTypeDef workType, int maxPri)
+        {
+            if (!ws.WorkIsActive(workType)) return false;
+            return ws.GetPriority(workType) < maxPri;
         }
 
         /// <summary>
