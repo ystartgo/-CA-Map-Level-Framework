@@ -77,7 +77,6 @@ namespace MapLevelFramework.CrossFloor
                 {
                     int destElev = betterJob.targetB.IsValid ? betterJob.targetB.Cell.x : -999;
                     LogPJ(pawn, $"本层有工作(pri={localPri})，但{ElevLabel(destElev)}有更高优先级工作→跨层");
-                    lastCrossFloorTick[pawn.thingIDNumber] = curTick;
                     __result = new ThinkResult(betterJob, __instance, null, false);
                 }
                 return;
@@ -93,7 +92,6 @@ namespace MapLevelFramework.CrossFloor
             if (deliverJob != null)
             {
                 LogPJ(pawn, $"P1命中→封装投递 {deliverJob.targetA.Thing?.LabelShort}");
-                lastCrossFloorTick[pawn.thingIDNumber] = curTick;
                 __result = new ThinkResult(deliverJob, __instance, null, false);
                 return;
             }
@@ -104,7 +102,6 @@ namespace MapLevelFramework.CrossFloor
             {
                 int destElev = goJob.targetB.IsValid ? goJob.targetB.Cell.x : -999;
                 LogPJ(pawn, $"P3命中→去{ElevLabel(destElev)}找工作");
-                lastCrossFloorTick[pawn.thingIDNumber] = curTick;
                 __result = new ThinkResult(goJob, __instance, null, false);
                 return;
             }
