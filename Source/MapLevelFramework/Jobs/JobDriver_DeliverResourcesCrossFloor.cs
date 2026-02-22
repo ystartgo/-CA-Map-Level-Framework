@@ -79,8 +79,8 @@ namespace MapLevelFramework
                 if (blueprint == null)
                 {
                     if (DebugLog)
-                        Log.Message($"【MLF】跨层投递-{pawn.LabelShort}—蓝图已消失 at {bpPos}，丢下材料");
-                    // 蓝图消失了，丢下材料（不浪费）
+                        Log.Message($"【MLF】跨层投递-{pawn.LabelShort}—目标位置无蓝图 at {bpPos}，丢下材料（可能是 Bill 原料投递）");
+                    // 无蓝图（可能是 Bill 原料投递）→ 丢在目标层，原版会找到
                     pawn.carryTracker.TryDropCarriedThing(pawn.Position, ThingPlaceMode.Near, out _);
                     return;
                 }

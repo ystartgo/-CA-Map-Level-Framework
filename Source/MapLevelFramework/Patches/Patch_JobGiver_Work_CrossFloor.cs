@@ -21,6 +21,14 @@ namespace MapLevelFramework.CrossFloor
             = new Dictionary<int, int>();
         private const int CooldownTicks = 600;
 
+        // WorkTypeDefOf 里没有的工作类型，按 defName 延迟查找
+        private static WorkTypeDef _wtCooking;
+        private static WorkTypeDef _wtTailoring;
+        private static WorkTypeDef _wtArt;
+        private static WorkTypeDef WTCooking => _wtCooking ?? (_wtCooking = DefDatabase<WorkTypeDef>.GetNamedSilentFail("Cooking"));
+        private static WorkTypeDef WTTailoring => _wtTailoring ?? (_wtTailoring = DefDatabase<WorkTypeDef>.GetNamedSilentFail("Tailoring"));
+        private static WorkTypeDef WTArt => _wtArt ?? (_wtArt = DefDatabase<WorkTypeDef>.GetNamedSilentFail("Art"));
+
         // 失败楼层追踪：pawnId → (mapId → failTick)
         // 当 pawn 到达某楼层但原版找不到工作时，标记该楼层为"失败"
         // P3 会跳过最近失败的楼层，防止反复弹跳
@@ -262,6 +270,17 @@ namespace MapLevelFramework.CrossFloor
                 if (t != null) return t;
             }
 
+            // Bill 类工作（烹饪/屠宰/制作等）
+            if (CheckWorkType(ws, WTCooking, maxPri)
+                || CheckWorkType(ws, WorkTypeDefOf.Crafting, maxPri)
+                || CheckWorkType(ws, WorkTypeDefOf.Smithing, maxPri)
+                || CheckWorkType(ws, WTTailoring, maxPri)
+                || CheckWorkType(ws, WTArt, maxPri))
+            {
+                Thing bench = FirstBuildingWithActiveBill(map);
+                if (bench != null) return bench;
+            }
+
             return null;
         }
 
@@ -270,34 +289,63 @@ namespace MapLevelFramework.CrossFloor
         /// </summary>
         private static bool CheckWorkType(Pawn_WorkSettings ws, WorkTypeDef workType, int maxPri)
         {
+            if (workType == null) return false;
             if (!ws.WorkIsActive(workType)) return false;
             return ws.GetPriority(workType) < maxPri;
         }
 
         /// <summary>
-        /// P1（新版）: 本层有材料，其他层蓝图/框架需要 → 封装投递 job。
-        /// 全程手持材料：拿起 → 走楼梯 → 传送 → 交给原版 HaulToContainer。
+        /// P1（新版）: 本层有材料/原料，其他层蓝图或工作台需要 → 封装投递 job。
+        /// 全程手持材料：拿起 → 走楼梯 → 传送 → 交给原版或丢下。
+        /// 第一轮：本层有材料 → 直接投递。
+        /// 第二轮：本层没有但其他层有 → 先去那层（UseStairs），下一轮 P1 再投递。
         /// </summary>
         private static Job TryCreateCrossFloorDeliverJob(Pawn pawn, Map pawnMap)
         {
-            if (!pawn.workSettings.WorkIsActive(WorkTypeDefOf.Construction)
-                && !pawn.workSettings.WorkIsActive(WorkTypeDefOf.Hauling))
-                return null;
+            var ws = pawn.workSettings;
 
+            // === 第一轮：本层有材料，直接投递 ===
             foreach (Map otherMap in pawnMap.BaseMapAndFloorMaps())
             {
                 if (otherMap == pawnMap) continue;
 
-                // 扫描其他层的蓝图和框架
-                var constructibles = otherMap.listerThings.ThingsInGroup(ThingRequestGroup.Blueprint);
-                var frames = otherMap.listerThings.ThingsInGroup(ThingRequestGroup.BuildingFrame);
+                // 建造材料投递
+                if (ws.WorkIsActive(WorkTypeDefOf.Construction)
+                    || ws.WorkIsActive(WorkTypeDefOf.Hauling))
+                {
+                    var constructibles = otherMap.listerThings.ThingsInGroup(ThingRequestGroup.Blueprint);
+                    var frames = otherMap.listerThings.ThingsInGroup(ThingRequestGroup.BuildingFrame);
 
-                Job job = TryScanConstructibles(pawn, pawnMap, otherMap, constructibles);
-                if (job != null) return job;
+                    Job job = TryScanConstructibles(pawn, pawnMap, otherMap, constructibles);
+                    if (job != null) return job;
 
-                job = TryScanConstructibles(pawn, pawnMap, otherMap, frames);
-                if (job != null) return job;
+                    job = TryScanConstructibles(pawn, pawnMap, otherMap, frames);
+                    if (job != null) return job;
+                }
+
+                // Bill 原料投递（屠宰尸体、烹饪原料等）
+                if ((WTCooking != null && ws.WorkIsActive(WTCooking))
+                    || ws.WorkIsActive(WorkTypeDefOf.Crafting)
+                    || ws.WorkIsActive(WorkTypeDefOf.Smithing)
+                    || (WTTailoring != null && ws.WorkIsActive(WTTailoring))
+                    || (WTArt != null && ws.WorkIsActive(WTArt)))
+                {
+                    Job job = TryScanBillIngredients(pawn, pawnMap, otherMap);
+                    if (job != null) return job;
+                }
+
+                // 燃料投递
+                if (ws.WorkIsActive(WorkTypeDefOf.Hauling))
+                {
+                    Job job = TryScanRefuelNeeds(pawn, pawnMap, otherMap);
+                    if (job != null) return job;
+                }
             }
+
+            // === 第二轮：本层没材料，找哪层有材料 → 先去那层 ===
+            Job goFetchJob = TryGoToFloorWithMaterials(pawn, pawnMap);
+            if (goFetchJob != null) return goFetchJob;
+
             return null;
         }
 
@@ -354,6 +402,358 @@ namespace MapLevelFramework.CrossFloor
                     job.count = toCarry;
                     return job;
                 }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// P1-Bill: 其他层工作台有活跃 bill，本层有原料 → 搬过去丢下。
+        /// 典型场景：1F 有尸体，2F 有屠宰台 → 搬尸体到 2F。
+        /// 复用 DeliverResourcesCrossFloor，到达后找不到蓝图会自动丢下物品。
+        /// 使用 bill.IsFixedOrAllowedIngredient(Thing) 验证，排除腐烂/干尸/禁止等。
+        /// </summary>
+        private static Job TryScanBillIngredients(Pawn pawn, Map pawnMap, Map otherMap)
+        {
+            int otherElev = FloorMapUtility.GetMapElevation(otherMap);
+
+            foreach (Building b in otherMap.listerBuildings.allBuildingsColonist)
+            {
+                IBillGiver bg = b as IBillGiver;
+                if (bg == null) continue;
+                BillStack bills = bg.BillStack;
+                if (bills == null || bills.Count == 0) continue;
+
+                for (int bi = 0; bi < bills.Count; bi++)
+                {
+                    Bill bill = bills[bi];
+                    if (!bill.ShouldDoNow()) continue;
+
+                    foreach (IngredientCount ing in bill.recipe.ingredients)
+                    {
+                        // 目标层已有可用原料（通过 bill filter 验证）？跳过
+                        if (HasUsableBillIngredient(otherMap, ing, bill))
+                            continue;
+
+                        // 本层找可用原料（通过 bill filter 验证，排除腐烂/禁止等）
+                        Thing ingredient = FindBillIngredientOnMap(pawnMap, pawn, ing, bill);
+                        if (ingredient == null) continue;
+
+                        // 找楼梯
+                        Building_Stairs stairs =
+                            FloorMapUtility.FindStairsToFloor(pawn, pawnMap, otherElev);
+                        if (stairs == null) return null;
+
+                        int toCarry = System.Math.Min(ingredient.stackCount,
+                            pawn.carryTracker.MaxStackSpaceEver(ingredient.def));
+
+                        LogPJ(pawn, $"  P1-Bill命中: 搬{ingredient.LabelShort}x{toCarry}→{ElevLabel(otherElev)} 给{b.LabelShort}");
+
+                        IntVec3 encoded = new IntVec3(otherElev, b.Position.x, b.Position.z);
+
+                        Job job = JobMaker.MakeJob(
+                            MLF_JobDefOf.MLF_DeliverResourcesCrossFloor,
+                            ingredient, stairs);
+                        job.targetC = encoded;
+                        job.count = toCarry;
+                        return job;
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 在指定地图上找 bill 可用的原料。
+        /// 通过 bill.IsFixedOrAllowedIngredient(Thing) 验证，排除腐烂/干尸/禁止等。
+        /// 遍历 filter 的 AllowedThingDefs（覆盖所有尸体类型等）。
+        /// </summary>
+        private static Thing FindBillIngredientOnMap(
+            Map map, Pawn pawn, IngredientCount ing, Bill bill)
+        {
+            Thing best = null;
+            float bestDist = float.MaxValue;
+
+            foreach (ThingDef def in ing.filter.AllowedThingDefs)
+            {
+                if (!bill.IsFixedOrAllowedIngredient(def)) continue;
+
+                var things = map.listerThings.ThingsOfDef(def);
+                for (int i = 0; i < things.Count; i++)
+                {
+                    Thing t = things[i];
+                    if (!t.Spawned) continue;
+                    if (t.IsForbidden(pawn)) continue;
+                    if (!bill.IsFixedOrAllowedIngredient(t)) continue;
+                    if (!pawn.CanReserve(t)) continue;
+                    if (!pawn.CanReach(t, PathEndMode.ClosestTouch, Danger.Deadly)) continue;
+
+                    float dist = t.Position.DistanceToSquared(pawn.Position);
+                    if (dist < bestDist)
+                    {
+                        best = t;
+                        bestDist = dist;
+                    }
+                }
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// 检查地图上是否已有 bill 可用的原料（未腐烂、未干尸等）。
+        /// </summary>
+        private static bool HasUsableBillIngredient(Map map, IngredientCount ing, Bill bill)
+        {
+            foreach (ThingDef def in ing.filter.AllowedThingDefs)
+            {
+                if (!bill.IsFixedOrAllowedIngredient(def)) continue;
+
+                var things = map.listerThings.ThingsOfDef(def);
+                for (int i = 0; i < things.Count; i++)
+                {
+                    if (things[i].Spawned && bill.IsFixedOrAllowedIngredient(things[i]))
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// P1-Refuel: 其他层建筑需要加油，本层有燃料 → 搬过去丢下。
+        /// </summary>
+        private static Job TryScanRefuelNeeds(Pawn pawn, Map pawnMap, Map otherMap)
+        {
+            int otherElev = FloorMapUtility.GetMapElevation(otherMap);
+
+            foreach (Building b in otherMap.listerBuildings.allBuildingsColonist)
+            {
+                CompRefuelable comp = b.TryGetComp<CompRefuelable>();
+                if (comp == null || comp.IsFull) continue;
+                if (!comp.ShouldAutoRefuelNow) continue;
+
+                ThingDef fuelDef = comp.Props.fuelFilter?.AnyAllowedDef;
+                if (fuelDef == null) continue;
+
+                // 目标层已有这个燃料？跳过
+                if (otherMap.listerThings.ThingsOfDef(fuelDef).Count > 0)
+                    continue;
+
+                // 本层有这个燃料？
+                Thing fuel = FindMaterialOnMap(pawnMap, pawn, fuelDef);
+                if (fuel == null) continue;
+
+                // 找楼梯
+                Building_Stairs stairs =
+                    FloorMapUtility.FindStairsToFloor(pawn, pawnMap, otherElev);
+                if (stairs == null) return null;
+
+                int needed = (int)System.Math.Ceiling((double)comp.GetFuelCountToFullyRefuel());
+                int toCarry = System.Math.Min(needed, fuel.stackCount);
+                toCarry = System.Math.Min(toCarry,
+                    pawn.carryTracker.MaxStackSpaceEver(fuel.def));
+
+                LogPJ(pawn, $"  P1-Refuel命中: 搬{fuel.LabelShort}x{toCarry}→{ElevLabel(otherElev)} 给{b.LabelShort}");
+
+                IntVec3 encoded = new IntVec3(otherElev, b.Position.x, b.Position.z);
+
+                Job job = JobMaker.MakeJob(
+                    MLF_JobDefOf.MLF_DeliverResourcesCrossFloor,
+                    fuel, stairs);
+                job.targetC = encoded;
+                job.count = toCarry;
+                return job;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// P1 第二轮：pawn 当前层没有材料，扫描其他楼层是否有材料可以满足某层的需求。
+        /// 如果找到 → UseStairs 去那层，下一轮 P1 第一轮会自动投递。
+        /// 典型场景：pawn 在 1F，4F 有钢铁，2F 有蓝图需要钢铁 → 去 4F。
+        /// </summary>
+        private static Job TryGoToFloorWithMaterials(Pawn pawn, Map pawnMap)
+        {
+            var ws = pawn.workSettings;
+            var allMaps = pawnMap.BaseMapAndFloorMaps();
+
+            foreach (Map needMap in allMaps)
+            {
+                if (needMap == pawnMap) continue;
+                int needElev = FloorMapUtility.GetMapElevation(needMap);
+
+                // 建造材料需求
+                if (ws.WorkIsActive(WorkTypeDefOf.Construction)
+                    || ws.WorkIsActive(WorkTypeDefOf.Hauling))
+                {
+                    Job job = TryFindMaterialFloorForConstruction(pawn, pawnMap, needMap, needElev);
+                    if (job != null) return job;
+                }
+
+                // Bill 原料需求
+                if ((WTCooking != null && ws.WorkIsActive(WTCooking))
+                    || ws.WorkIsActive(WorkTypeDefOf.Crafting)
+                    || ws.WorkIsActive(WorkTypeDefOf.Smithing)
+                    || (WTTailoring != null && ws.WorkIsActive(WTTailoring))
+                    || (WTArt != null && ws.WorkIsActive(WTArt)))
+                {
+                    Job job = TryFindMaterialFloorForBills(pawn, pawnMap, needMap, needElev);
+                    if (job != null) return job;
+                }
+
+                // 燃料需求
+                if (ws.WorkIsActive(WorkTypeDefOf.Hauling))
+                {
+                    Job job = TryFindMaterialFloorForRefuel(pawn, pawnMap, needMap, needElev);
+                    if (job != null) return job;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 在其他楼层找建造材料：needMap 有蓝图缺材料，某个 materialMap 有 → 去 materialMap。
+        /// </summary>
+        private static Job TryFindMaterialFloorForConstruction(
+            Pawn pawn, Map pawnMap, Map needMap, int needElev)
+        {
+            var constructibles = needMap.listerThings.ThingsInGroup(ThingRequestGroup.Blueprint);
+            var frames = needMap.listerThings.ThingsInGroup(ThingRequestGroup.BuildingFrame);
+
+            Job job = ScanConstructiblesForMaterialFloor(pawn, pawnMap, needMap, needElev, constructibles);
+            if (job != null) return job;
+            return ScanConstructiblesForMaterialFloor(pawn, pawnMap, needMap, needElev, frames);
+        }
+
+        private static Job ScanConstructiblesForMaterialFloor(
+            Pawn pawn, Map pawnMap, Map needMap, int needElev, List<Thing> constructibles)
+        {
+            for (int ci = 0; ci < constructibles.Count; ci++)
+            {
+                IConstructible c = constructibles[ci] as IConstructible;
+                if (c == null) continue;
+                if (constructibles[ci].IsForbidden(pawn)) continue;
+
+                var costs = c.TotalMaterialCost();
+                for (int i = 0; i < costs.Count; i++)
+                {
+                    int needed = c.ThingCountNeeded(costs[i].thingDef);
+                    if (needed <= 0) continue;
+
+                    int looseOnDest = CountLooseMaterial(needMap, costs[i].thingDef);
+                    if (looseOnDest >= needed) continue;
+
+                    // 本层也没有（第一轮已确认），找其他层
+                    Job job = FindFloorWithMaterial(pawn, pawnMap, costs[i].thingDef);
+                    if (job != null)
+                    {
+                        LogPJ(pawn, $"  P1-2nd: {ElevLabel(needElev)}需要{costs[i].thingDef.label}，去其他层取");
+                        return job;
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 在其他楼层找 Bill 原料：needMap 有 bill 缺原料，某个 materialMap 有 → 去 materialMap。
+        /// </summary>
+        private static Job TryFindMaterialFloorForBills(
+            Pawn pawn, Map pawnMap, Map needMap, int needElev)
+        {
+            foreach (Building b in needMap.listerBuildings.allBuildingsColonist)
+            {
+                IBillGiver bg = b as IBillGiver;
+                if (bg == null) continue;
+                BillStack bills = bg.BillStack;
+                if (bills == null || bills.Count == 0) continue;
+
+                for (int bi = 0; bi < bills.Count; bi++)
+                {
+                    Bill bill = bills[bi];
+                    if (!bill.ShouldDoNow()) continue;
+
+                    foreach (IngredientCount ing in bill.recipe.ingredients)
+                    {
+                        if (HasUsableBillIngredient(needMap, ing, bill)) continue;
+
+                        // 找哪层有这个原料
+                        Job job = FindFloorWithBillIngredient(pawn, pawnMap, ing, bill);
+                        if (job != null)
+                        {
+                            LogPJ(pawn, $"  P1-2nd-Bill: {ElevLabel(needElev)}的{b.LabelShort}需要原料，去其他层取");
+                            return job;
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 在其他楼层找燃料：needMap 有建筑缺燃料，某个 materialMap 有 → 去 materialMap。
+        /// </summary>
+        private static Job TryFindMaterialFloorForRefuel(
+            Pawn pawn, Map pawnMap, Map needMap, int needElev)
+        {
+            foreach (Building b in needMap.listerBuildings.allBuildingsColonist)
+            {
+                CompRefuelable comp = b.TryGetComp<CompRefuelable>();
+                if (comp == null || comp.IsFull) continue;
+                if (!comp.ShouldAutoRefuelNow) continue;
+
+                ThingDef fuelDef = comp.Props.fuelFilter?.AnyAllowedDef;
+                if (fuelDef == null) continue;
+
+                if (needMap.listerThings.ThingsOfDef(fuelDef).Count > 0) continue;
+
+                Job job = FindFloorWithMaterial(pawn, pawnMap, fuelDef);
+                if (job != null)
+                {
+                    LogPJ(pawn, $"  P1-2nd-Refuel: {ElevLabel(needElev)}的{b.LabelShort}需要{fuelDef.label}，去其他层取");
+                    return job;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 在所有楼层（排除 pawnMap）找指定材料，找到则返回 UseStairs job 去那层。
+        /// </summary>
+        private static Job FindFloorWithMaterial(Pawn pawn, Map pawnMap, ThingDef matDef)
+        {
+            foreach (Map matMap in pawnMap.BaseMapAndFloorMaps())
+            {
+                if (matMap == pawnMap) continue;
+                if (matMap.listerThings.ThingsOfDef(matDef).Count == 0) continue;
+
+                int matElev = FloorMapUtility.GetMapElevation(matMap);
+                Building_Stairs stairs = FloorMapUtility.FindStairsToFloor(pawn, pawnMap, matElev);
+                if (stairs == null) continue;
+
+                Job job = JobMaker.MakeJob(MLF_JobDefOf.MLF_UseStairs, stairs);
+                job.targetB = new IntVec3(matElev, 0, 0);
+                return job;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 在所有楼层（排除 pawnMap）找 Bill 可用原料，找到则返回 UseStairs job 去那层。
+        /// </summary>
+        private static Job FindFloorWithBillIngredient(
+            Pawn pawn, Map pawnMap, IngredientCount ing, Bill bill)
+        {
+            foreach (Map matMap in pawnMap.BaseMapAndFloorMaps())
+            {
+                if (matMap == pawnMap) continue;
+                if (!HasUsableBillIngredient(matMap, ing, bill)) continue;
+
+                int matElev = FloorMapUtility.GetMapElevation(matMap);
+                Building_Stairs stairs = FloorMapUtility.FindStairsToFloor(pawn, pawnMap, matElev);
+                if (stairs == null) continue;
+
+                Job job = JobMaker.MakeJob(MLF_JobDefOf.MLF_UseStairs, stairs);
+                job.targetB = new IntVec3(matElev, 0, 0);
+                return job;
             }
             return null;
         }
@@ -587,6 +987,17 @@ namespace MapLevelFramework.CrossFloor
             {
                 var fires = map.listerThings.ThingsOfDef(ThingDefOf.Fire);
                 if (fires.Count > 0) return fires[0];
+            }
+
+            // Bill 类工作（烹饪/屠宰/制作等）→ 返回有活跃 bill 的工作台
+            if ((WTCooking != null && ws.WorkIsActive(WTCooking))
+                || ws.WorkIsActive(WorkTypeDefOf.Crafting)
+                || ws.WorkIsActive(WorkTypeDefOf.Smithing)
+                || (WTTailoring != null && ws.WorkIsActive(WTTailoring))
+                || (WTArt != null && ws.WorkIsActive(WTArt)))
+            {
+                Thing bench = FirstBuildingWithActiveBill(map);
+                if (bench != null) return bench;
             }
 
             // 研究、医疗、监管等 → 无法确定具体 Thing，返回 null
@@ -883,6 +1294,10 @@ namespace MapLevelFramework.CrossFloor
                 if (map.listerHaulables
                         .ThingsPotentiallyNeedingHauling().Count > 0)
                 { LogPJ(pawn, $"  {ElevLabel(elev)}有工作: 搬运(Hauling)"); return true; }
+
+                // 加油（需要燃料的建筑）
+                if (FloorHasRefuelWork(map))
+                { LogPJ(pawn, $"  {ElevLabel(elev)}有工作: 加油(Hauling)"); return true; }
             }
 
             // 清洁
@@ -951,6 +1366,17 @@ namespace MapLevelFramework.CrossFloor
                 { LogPJ(pawn, $"  {ElevLabel(elev)}有工作: 灭火(Firefighter)"); return true; }
             }
 
+            // Bill 类工作（烹饪/屠宰/制作/裁缝/锻造/艺术/制药）
+            if ((WTCooking != null && ws.WorkIsActive(WTCooking))
+                || ws.WorkIsActive(WorkTypeDefOf.Crafting)
+                || ws.WorkIsActive(WorkTypeDefOf.Smithing)
+                || (WTTailoring != null && ws.WorkIsActive(WTTailoring))
+                || (WTArt != null && ws.WorkIsActive(WTArt)))
+            {
+                if (FloorHasActiveBills(map))
+                { LogPJ(pawn, $"  {ElevLabel(elev)}有工作: 工作台Bill"); return true; }
+            }
+
             // 研究
             if (ws.WorkIsActive(WorkTypeDefOf.Research))
             {
@@ -967,6 +1393,58 @@ namespace MapLevelFramework.CrossFloor
         {
             foreach (var _ in map.designationManager.SpawnedDesignationsOfDef(def))
                 return true;
+            return false;
+        }
+
+        /// <summary>
+        /// 检查地图上是否有活跃 bill 的工作台（烹饪/屠宰/制作等）。
+        /// </summary>
+        private static bool FloorHasActiveBills(Map map)
+        {
+            foreach (Building b in map.listerBuildings.allBuildingsColonist)
+            {
+                IBillGiver bg = b as IBillGiver;
+                if (bg == null) continue;
+                BillStack bills = bg.BillStack;
+                if (bills == null || bills.Count == 0) continue;
+                for (int i = 0; i < bills.Count; i++)
+                {
+                    if (bills[i].ShouldDoNow()) return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 返回地图上第一个有活跃 bill 的工作台。
+        /// </summary>
+        private static Thing FirstBuildingWithActiveBill(Map map)
+        {
+            foreach (Building b in map.listerBuildings.allBuildingsColonist)
+            {
+                IBillGiver bg = b as IBillGiver;
+                if (bg == null) continue;
+                BillStack bills = bg.BillStack;
+                if (bills == null || bills.Count == 0) continue;
+                for (int i = 0; i < bills.Count; i++)
+                {
+                    if (bills[i].ShouldDoNow()) return b;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 检查地图上是否有需要加油的建筑。
+        /// </summary>
+        private static bool FloorHasRefuelWork(Map map)
+        {
+            foreach (Building b in map.listerBuildings.allBuildingsColonist)
+            {
+                CompRefuelable comp = b.TryGetComp<CompRefuelable>();
+                if (comp != null && !comp.IsFull && comp.ShouldAutoRefuelNow)
+                    return true;
+            }
             return false;
         }
 
