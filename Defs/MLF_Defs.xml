@@ -217,7 +217,7 @@
   <ThingDef ParentName="BuildingBase">
     <defName>MLF_Stairs</defName>
     <label>楼层传送器（上）</label>
-    <description>连接地面层和上层的楼层传送器。在有屋顶的房间内建造，即可创建二楼。\n\n作者累了，采用偷懒方案：任意传送器之间可以互相传送，无需在同一位置。</description>
+    <description>连接地面层和上层的楼层传送器。在有屋顶的房间内建造，即可创建二楼。\n\n作者累了，采用偷懒方案：任意传送器之间可以互相传送，无需在同一位置。\n不要问我为什么楼梯可以存电，问就是超凡科技。</description>
     <thingClass>MapLevelFramework.Building_Stairs</thingClass>
     <graphicData>
       <texPath>楼梯</texPath>
@@ -245,11 +245,11 @@
       <isInert>true</isInert>
     </building>
     <comps>
-      <li Class="CompProperties_Power">
-        <compClass>CompPowerTrader</compClass>
+      <li Class="CompProperties_Battery">
+        <compClass>MapLevelFramework.CompPowerBatteryRelay</compClass>
+        <storedEnergyMax>99999999</storedEnergyMax>
+        <efficiency>1.0</efficiency>
         <transmitsPower>true</transmitsPower>
-        <basePowerConsumption>0</basePowerConsumption>
-        <showPowerNeededIfOff>false</showPowerNeededIfOff>
       </li>
     </comps>
   </ThingDef>
@@ -258,7 +258,7 @@
   <ThingDef ParentName="BuildingBase">
     <defName>MLF_StairsDown</defName>
     <label>楼层传送器（下）</label>
-    <description>通往地下层的楼层传送器。建造后即可开辟地下空间。\n\n作者累了，采用偷懒方案：任意传送器之间可以互相传送，无需在同一位置。</description>
+    <description>通往地下层的楼层传送器。建造后即可开辟地下空间。\n\n作者累了，采用偷懒方案：任意传送器之间可以互相传送，无需在同一位置。\n不要问我为什么楼梯可以存电，问就是超凡科技。</description>
     <thingClass>MapLevelFramework.Building_Stairs</thingClass>
     <graphicData>
       <texPath>楼梯</texPath>
@@ -286,11 +286,11 @@
       <isInert>true</isInert>
     </building>
     <comps>
-      <li Class="CompProperties_Power">
-        <compClass>CompPowerTrader</compClass>
+      <li Class="CompProperties_Battery">
+        <compClass>MapLevelFramework.CompPowerBatteryRelay</compClass>
+        <storedEnergyMax>99999999</storedEnergyMax>
+        <efficiency>1.0</efficiency>
         <transmitsPower>true</transmitsPower>
-        <basePowerConsumption>0</basePowerConsumption>
-        <showPowerNeededIfOff>false</showPowerNeededIfOff>
       </li>
     </comps>
     <modExtensions>

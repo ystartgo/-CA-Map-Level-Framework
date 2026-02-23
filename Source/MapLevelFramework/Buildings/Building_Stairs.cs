@@ -37,9 +37,9 @@ namespace MapLevelFramework
         private bool autoSpawned;
 
         /// <summary>
-        /// 缓存的电力组件（跨层电力传输用）。
+        /// 缓存的电池组件（跨层电力传输用）。
         /// </summary>
-        public CompPowerTrader CompPowerTrader;
+        public CompPowerBatteryRelay CompPowerBattery;
 
         /// <summary>
         /// 该楼梯 Def 是否标记为下楼方向。
@@ -60,8 +60,8 @@ namespace MapLevelFramework
         {
             base.SpawnSetup(map, respawningAfterLoad);
 
-            // 缓存电力组件
-            CompPowerTrader = GetComp<CompPowerTrader>();
+            // 缓存电池组件
+            CompPowerBattery = GetComp<CompPowerBatteryRelay>();
 
             // 注册到缓存
             StairsCache.Register(this);
@@ -189,29 +189,11 @@ namespace MapLevelFramework
         // ========== 电力传输辅助 ==========
 
         /// <summary>
-        /// 重置楼梯的电力输出为 0（由 PowerRelayManager 调用前重置）。
-        /// </summary>
-        public void ResetPowerOutput()
-        {
-            if (CompPowerTrader != null)
-                CompPowerTrader.powerOutputInt = 0f;
-        }
-
-        /// <summary>
-        /// 获取楼梯当前的电力传输信息。
+        /// 获取楼梯当前信息。
         /// </summary>
         public override string GetInspectString()
         {
-            string baseStr = base.GetInspectString();
-            if (CompPowerTrader != null && CompPowerTrader.PowerNet != null)
-            {
-                float output = CompPowerTrader.PowerOutput;
-                if (output > 0.5f)
-                    baseStr += $"\n跨层供电: +{output:F0} W";
-                else if (output < -0.5f)
-                    baseStr += $"\n跨层输电: {output:F0} W";
-            }
-            return baseStr;
+            return base.GetInspectString();
         }
 
         // ========== 右键菜单 ==========

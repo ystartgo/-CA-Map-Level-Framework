@@ -357,6 +357,7 @@ namespace MapLevelFramework.CrossFloor
             {
                 IConstructible c = constructibles[ci] as IConstructible;
                 if (c == null) continue;
+                if (constructibles[ci] is Blueprint_Install) continue;
                 if (constructibles[ci].IsForbidden(pawn)) continue;
 
                 var costs = c.TotalMaterialCost();
@@ -630,6 +631,7 @@ namespace MapLevelFramework.CrossFloor
             {
                 IConstructible c = constructibles[ci] as IConstructible;
                 if (c == null) continue;
+                if (constructibles[ci] is Blueprint_Install) continue;
                 if (constructibles[ci].IsForbidden(pawn)) continue;
 
                 var costs = c.TotalMaterialCost();
@@ -1064,6 +1066,7 @@ namespace MapLevelFramework.CrossFloor
             {
                 IConstructible c = constructibles[i] as IConstructible;
                 if (c == null) continue;
+                if (constructibles[i] is Blueprint_Install) continue;
                 foreach (var cost in c.TotalMaterialCost())
                 {
                     int needed = c.ThingCountNeeded(cost.thingDef);
@@ -1272,6 +1275,7 @@ namespace MapLevelFramework.CrossFloor
                 for (int i = 0; i < blueprints.Count; i++)
                 {
                     if (blueprints[i].IsForbidden(pawn)) continue;
+                    if (blueprints[i] is Blueprint_Install) continue;
                     IConstructible c = blueprints[i] as IConstructible;
                     if (c != null && c.TotalMaterialCost().Count == 0)
                     { LogPJ(pawn, $"  {ElevLabel(elev)}有工作: 零成本蓝图(Construction)"); return true; }
@@ -1483,6 +1487,7 @@ namespace MapLevelFramework.CrossFloor
         /// </summary>
         private static bool HasAllMaterialsOnMap(Map map, IConstructible c, Pawn pawn)
         {
+            if (c is Blueprint_Install) return true;
             var costs = c.TotalMaterialCost();
             for (int i = 0; i < costs.Count; i++)
             {
