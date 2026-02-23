@@ -29,7 +29,7 @@ namespace MapLevelFramework.Gui
 
             // 计算 UI 位置（右侧中间）
             float totalHeight = elevations.Count * (ButtonHeight + Padding);
-            float startX = Verse.UI.screenWidth - ButtonWidth - 20f;
+            float startX = Verse.UI.screenWidth - ButtonWidth - 60f;
             float startY = (Verse.UI.screenHeight - totalHeight) / 2f;
 
             // 绘制背景

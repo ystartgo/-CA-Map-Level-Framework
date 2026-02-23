@@ -224,7 +224,7 @@ namespace MapLevelFramework
             // pawn 必须和楼梯在同一张地图
             if (selPawn.Map != this.Map) yield break;
 
-            // 电梯模式：显示所有可达楼层
+            // 电梯模式：显示所有可达楼层，按栋号区分
             int currentElevation = GetCurrentElevation();
             var reachableFloors = FloorMapUtility.GetReachableFloors(this);
 
@@ -233,15 +233,38 @@ namespace MapLevelFramework
                 var (destMap, destElev) = reachableFloors[i];
                 string direction = destElev > currentElevation ? "上楼" : "下楼";
                 string floorLabel = GetElevationLabel(destElev);
-                string label = $"{direction}到 {floorLabel}";
 
-                int capturedElev = destElev;
-                yield return new FloatMenuOption(label, delegate
+                // 收集目标层所有传送器，按栋号分组
+                var destStairs = StairsCache.GetAllStairsOnMap(destMap);
+                var buildingGroups = new Dictionary<string, Building_Stairs>();
+                if (destStairs != null)
                 {
-                    Job job = JobMaker.MakeJob(MLF_JobDefOf.MLF_UseStairs, this);
-                    job.targetB = new IntVec3(capturedElev, 0, 0);
-                    selPawn.jobs.TryTakeOrderedJob(job, JobTag.Misc);
-                });
+                    foreach (var ds in destStairs)
+                    {
+                        string bl = ds.buildingLabel ?? "";
+                        if (!buildingGroups.ContainsKey(bl))
+                            buildingGroups[bl] = ds;
+                    }
+                }
+
+                foreach (var kv in buildingGroups)
+                {
+                    string bLabel = kv.Key;
+                    Building_Stairs destStair = kv.Value;
+                    string label = string.IsNullOrEmpty(bLabel)
+                        ? $"{direction}到 {floorLabel}"
+                        : $"{direction}到 {floorLabel} {bLabel}栋";
+
+                    int capturedElev = destElev;
+                    IntVec3 capturedPos = destStair.Position;
+                    yield return new FloatMenuOption(label, delegate
+                    {
+                        Job job = JobMaker.MakeJob(MLF_JobDefOf.MLF_UseStairs, this);
+                        job.targetB = new IntVec3(capturedElev, 0, 0);
+                        job.targetC = capturedPos;
+                        selPawn.jobs.TryTakeOrderedJob(job, JobTag.Misc);
+                    });
+                }
             }
         }
 
