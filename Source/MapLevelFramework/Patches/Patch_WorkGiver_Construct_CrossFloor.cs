@@ -140,7 +140,9 @@ namespace MapLevelFramework.Patches
                 else
                 {
                     // 材料在其他层 → UseStairs 去材料层
-                    // 到达后原版 WorkGiver 重新扫描，此时材料在 pawn 当前层 → 走上面的分支
+                    // 设置意图保护：到达后 Postfix 不会因优先级比较把 pawn 送走
+                    CrossFloorIntent.Set(pawn, material.Map.uniqueID, material.Position, material.def);
+
                     Job stairsJob = JobMaker.MakeJob(MLF_JobDefOf.MLF_UseStairs, stairsToMaterial);
                     stairsJob.targetB = new IntVec3(materialElev, 0, 0);
 
