@@ -113,6 +113,15 @@ namespace MapLevelFramework.CrossFloor
                 return;
             }
 
+            // P2: 本层有蓝图缺材料，其他层有材料 → UseStairs 去取
+            Job fetchJob = TryCreateFetchMaterialJob(pawn, pawnMap);
+            if (fetchJob != null)
+            {
+                LogPJ(pawn, $"P2命中→去其他层取材料");
+                __result = new ThinkResult(fetchJob, __instance, null, false);
+                return;
+            }
+
             // P3: 本层无工作 → 去有工作的楼层（智能过滤）
             Job goJob = TryCreateGoToWorkFloorJob(pawn, pawnMap);
             if (goJob != null)
