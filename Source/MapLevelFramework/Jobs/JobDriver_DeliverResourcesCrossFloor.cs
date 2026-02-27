@@ -78,10 +78,26 @@ namespace MapLevelFramework
                 Thing blueprint = FindConstructibleAt(destMap, bpPos);
                 if (blueprint == null)
                 {
+                    // 无蓝图 → Bill 原料投递：丢在工作台附近，然后封装 DoBill job
+                    IntVec3 dropPos = bpPos.IsValid && bpPos.InBounds(destMap) ? bpPos : pawn.Position;
+                    pawn.carryTracker.TryDropCarriedThing(dropPos, ThingPlaceMode.Near, out _);
+
+                    // 找工作台，尝试直接开始 DoBill
+                    Thing workbench = FindBillGiverAt(destMap, bpPos);
+                    if (workbench != null)
+                    {
+                        Job billJob = TryCreateBillJob(pawn, workbench);
+                        if (billJob != null)
+                        {
+                            if (DebugLog)
+                                Log.Message($"【MLF】跨层投递-{pawn.LabelShort}—Bill封装: 丢下材料后开始 DoBill at {workbench.LabelShort}");
+                            pawn.jobs.StartJob(billJob, JobCondition.None, null, false, true);
+                            return;
+                        }
+                    }
+
                     if (DebugLog)
-                        Log.Message($"【MLF】跨层投递-{pawn.LabelShort}—目标位置无蓝图 at {bpPos}，丢下材料（可能是 Bill 原料投递）");
-                    // 无蓝图（可能是 Bill 原料投递）→ 丢在目标层，原版会找到
-                    pawn.carryTracker.TryDropCarriedThing(pawn.Position, ThingPlaceMode.Near, out _);
+                        Log.Message($"【MLF】跨层投递-{pawn.LabelShort}—目标位置无蓝图/工作台 at {bpPos}，丢下材料");
                     return;
                 }
 
@@ -135,6 +151,47 @@ namespace MapLevelFramework
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// 在指定位置找 IBillGiver（工作台）。
+        /// </summary>
+        private static Thing FindBillGiverAt(Map map, IntVec3 pos)
+        {
+            if (!pos.InBounds(map)) return null;
+            var things = map.thingGrid.ThingsListAtFast(pos);
+            for (int i = 0; i < things.Count; i++)
+            {
+                if (things[i] is IBillGiver && things[i].Spawned)
+                    return things[i];
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 通过原版 BillUtility + WorkGiver_DoBill 创建 DoBill job。
+        /// 材料刚丢在工作台附近，TryFindBestBillIngredients 会搜索到它。
+        /// </summary>
+        private static Job TryCreateBillJob(Pawn pawn, Thing workbench)
+        {
+            try
+            {
+                IBillGiver bg = workbench as IBillGiver;
+                if (bg == null) return null;
+
+                WorkGiverDef wgDef = BillUtility.GetWorkgiver(bg);
+                if (wgDef == null) return null;
+
+                WorkGiver_DoBill wg = wgDef.Worker as WorkGiver_DoBill;
+                if (wg == null) return null;
+
+                return wg.JobOnThing(pawn, workbench);
+            }
+            catch (System.Exception ex)
+            {
+                Log.Warning($"【MLF】TryCreateBillJob failed: {ex.Message}");
+                return null;
+            }
         }
     }
 }
