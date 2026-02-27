@@ -538,10 +538,9 @@ namespace MapLevelFramework.CrossFloor
         }
 
         /// <summary>
-        /// P1-Bill: 其他层工作台有活跃 bill，本层有原料 → 搬过去丢下。
-        /// 典型场景：1F 有尸体，2F 有屠宰台 → 搬尸体到 2F。
-        /// 复用 DeliverResourcesCrossFloor，到达后找不到蓝图会自动丢下物品。
-        /// 使用 bill.IsFixedOrAllowedIngredient(Thing) 验证，排除腐烂/干尸/禁止等。
+        /// P1-Bill: 其他层工作台有活跃 bill，本层有原料 → 搬过去。
+        /// 多材料 bill（如需要钢+木）会一次性收集所有本层有的原料，塞进背包一趟搬完。
+        /// 单材料则走原有 carry 流程。
         /// </summary>
         private static Job TryScanBillIngredients(Pawn pawn, Map pawnMap, Map otherMap)
         {
@@ -559,33 +558,107 @@ namespace MapLevelFramework.CrossFloor
                     Bill bill = bills[bi];
                     if (!bill.ShouldDoNow()) continue;
 
-                    foreach (IngredientCount ing in bill.recipe.ingredients)
+                    // 收集这个 bill 所有缺失的、本层有的原料
+                    // usedThings 防止同一个 Thing 被多个 ingredient 重复选中
+                    List<Thing> foundMats = null;
+                    List<int> foundCounts = null;
+                    HashSet<Thing> usedThings = null;
+
+                    // 按 filter 宽度排序：窄 filter 优先，防止宽 filter 先消耗窄 filter 需要的材料
+                    List<IngredientCount> sortedIngs = new List<IngredientCount>(bill.recipe.ingredients);
+                    sortedIngs.Sort((a, b2) =>
                     {
-                        // 目标层已有可用原料（通过 bill filter 验证）？跳过
-                        if (HasUsableBillIngredient(otherMap, ing, bill))
+                        int cA = 0, cB = 0;
+                        foreach (var _ in a.filter.AllowedThingDefs) cA++;
+                        foreach (var _ in b2.filter.AllowedThingDefs) cB++;
+                        return cA.CompareTo(cB);
+                    });
+
+                    foreach (IngredientCount ing in sortedIngs)
+                    {
+                        // 跳过用户 ingredientFilter 完全不允许的 ingredient
+                        // （例如用户禁用了钢铁，"钢铁" FixedIngredient 的所有 def 都被 block）
+                        if (!HasAnyAllowedDef(ing, bill))
+                        {
+                            LogPJ(pawn, $"  P1-Bill ing[{ing.filter.Summary}]: 用户filter全禁，跳过");
                             continue;
+                        }
 
-                        // 本层找可用原料（通过 bill filter 验证，排除腐烂/禁止等）
-                        Thing ingredient = FindBillIngredientOnMap(pawnMap, pawn, ing, bill);
-                        if (ingredient == null) continue;
+                        bool hasOnOther = HasUsableBillIngredient(otherMap, ing, bill);
+                        if (hasOnOther)
+                        {
+                            LogPJ(pawn, $"  P1-Bill ing[{ing.filter.Summary}]x{ing.GetBaseCount()}: 2F已有足够，跳过");
+                            continue;
+                        }
 
-                        // 找楼梯
-                        Building_Stairs stairs =
-                            FloorMapUtility.FindStairsToFloor(pawn, pawnMap, otherElev);
-                        if (stairs == null) return null;
+                        Thing ingredient = FindBillIngredientOnMap(
+                            pawnMap, pawn, ing, bill, usedThings);
+                        LogPJ(pawn, $"  P1-Bill ing[{ing.filter.Summary}]x{ing.GetBaseCount()}: 2F不够, 1F找到={ingredient?.def?.defName ?? "null"}");
+                        if (ingredient == null)
+                        {
+                            // 本层也没有，跳过这个 ingredient，继续检查其他 ingredient
+                            continue;
+                        }
 
                         int toCarry = System.Math.Min(ingredient.stackCount,
                             pawn.carryTracker.MaxStackSpaceEver(ingredient.def));
+                        if (toCarry <= 0) continue;
 
-                        LogPJ(pawn, $"  P1-Bill命中: 搬{ingredient.LabelShort}x{toCarry}→{ElevLabel(otherElev)} 给{b.LabelShort}");
+                        if (foundMats == null)
+                        {
+                            foundMats = new List<Thing>();
+                            foundCounts = new List<int>();
+                            usedThings = new HashSet<Thing>();
+                        }
+                        foundMats.Add(ingredient);
+                        foundCounts.Add(toCarry);
+                        usedThings.Add(ingredient);
+                    }
 
-                        IntVec3 encoded = new IntVec3(otherElev, b.Position.x, b.Position.z);
+                    if (foundMats == null || foundMats.Count == 0) continue;
+
+                    // 找楼梯
+                    Building_Stairs stairs =
+                        FloorMapUtility.FindStairsToFloor(pawn, pawnMap, otherElev);
+                    if (stairs == null) return null;
+
+                    IntVec3 encoded = new IntVec3(otherElev, b.Position.x, b.Position.z);
+                    LogPJ(pawn, $"  P1-Bill编码: workbench={b.def.defName}@{b.Position}, size={b.def.size}, encoded=({encoded.x},{encoded.y},{encoded.z})");
+
+                    if (foundMats.Count == 1)
+                    {
+                        // 单材料 → carry 流程
+                        LogPJ(pawn, $"  P1-Bill命中: 搬{foundMats[0].LabelShort}x{foundCounts[0]}→{ElevLabel(otherElev)} 给{b.LabelShort}");
 
                         Job job = JobMaker.MakeJob(
                             MLF_JobDefOf.MLF_DeliverResourcesCrossFloor,
-                            ingredient, stairs);
+                            foundMats[0], stairs);
                         job.targetC = encoded;
-                        job.count = toCarry;
+                        job.count = foundCounts[0];
+                        return job;
+                    }
+                    else
+                    {
+                        // 多材料 → inventory 流程
+                        string matList = "";
+                        for (int mi = 0; mi < foundMats.Count; mi++)
+                        {
+                            if (mi > 0) matList += "+";
+                            matList += $"{foundMats[mi].LabelShort}x{foundCounts[mi]}";
+                        }
+                        LogPJ(pawn, $"  P1-Bill命中(多材料): 搬{matList}→{ElevLabel(otherElev)} 给{b.LabelShort}");
+
+                        Job job = JobMaker.MakeJob(
+                            MLF_JobDefOf.MLF_DeliverResourcesCrossFloor,
+                            (Thing)null, stairs);
+                        job.targetC = encoded;
+                        job.targetQueueA = new List<LocalTargetInfo>();
+                        job.countQueue = new List<int>();
+                        for (int mi = 0; mi < foundMats.Count; mi++)
+                        {
+                            job.targetQueueA.Add(foundMats[mi]);
+                            job.countQueue.Add(foundCounts[mi]);
+                        }
                         return job;
                     }
                 }
@@ -598,8 +671,26 @@ namespace MapLevelFramework.CrossFloor
         /// 通过 bill.IsFixedOrAllowedIngredient(Thing) 验证，排除腐烂/干尸/禁止等。
         /// 遍历 filter 的 AllowedThingDefs（覆盖所有尸体类型等）。
         /// </summary>
+        /// <summary>
+        /// 检查 ingredient 是否有任何 def 可用（考虑 FixedIngredient 豁免）。
+        /// FixedIngredient 不受 bill.ingredientFilter 限制（原版设计）。
+        /// </summary>
+        private static bool HasAnyAllowedDef(IngredientCount ing, Bill bill)
+        {
+            // FixedIngredient 是配方硬性要求，不受用户 ingredientFilter 限制
+            if (ing.IsFixedIngredient) return true;
+
+            foreach (ThingDef def in ing.filter.AllowedThingDefs)
+            {
+                if (!bill.IsFixedOrAllowedIngredient(def)) continue;
+                if (bill.ingredientFilter.Allows(def)) return true;
+            }
+            return false;
+        }
+
         private static Thing FindBillIngredientOnMap(
-            Map map, Pawn pawn, IngredientCount ing, Bill bill)
+            Map map, Pawn pawn, IngredientCount ing, Bill bill,
+            HashSet<Thing> excludeThings = null)
         {
             Thing best = null;
             float bestDist = float.MaxValue;
@@ -607,12 +698,15 @@ namespace MapLevelFramework.CrossFloor
             foreach (ThingDef def in ing.filter.AllowedThingDefs)
             {
                 if (!bill.IsFixedOrAllowedIngredient(def)) continue;
+                // FixedIngredient 豁免 ingredientFilter（原版设计）
+                if (!ing.IsFixedIngredient && !bill.ingredientFilter.Allows(def)) continue;
 
                 var things = map.listerThings.ThingsOfDef(def);
                 for (int i = 0; i < things.Count; i++)
                 {
                     Thing t = things[i];
                     if (!t.Spawned) continue;
+                    if (excludeThings != null && excludeThings.Contains(t)) continue;
                     if (t.IsForbidden(pawn)) continue;
                     if (!bill.IsFixedOrAllowedIngredient(t)) continue;
                     if (!pawn.CanReserve(t)) continue;
@@ -634,14 +728,25 @@ namespace MapLevelFramework.CrossFloor
         /// </summary>
         private static bool HasUsableBillIngredient(Map map, IngredientCount ing, Bill bill)
         {
+            float needed = ing.GetBaseCount();
+            float found = 0f;
+
             foreach (ThingDef def in ing.filter.AllowedThingDefs)
             {
                 if (!bill.IsFixedOrAllowedIngredient(def)) continue;
+                // FixedIngredient 豁免 ingredientFilter（原版设计）
+                if (!ing.IsFixedIngredient && !bill.ingredientFilter.Allows(def)) continue;
 
                 var things = map.listerThings.ThingsOfDef(def);
                 for (int i = 0; i < things.Count; i++)
                 {
-                    if (things[i].Spawned && bill.IsFixedOrAllowedIngredient(things[i]))
+                    if (!things[i].Spawned) continue;
+                    if (things[i].IsForbidden(Faction.OfPlayer)) continue;
+                    if (!bill.IsFixedOrAllowedIngredient(things[i])) continue;
+
+                    float val = bill.recipe.IngredientValueGetter.ValuePerUnitOf(def);
+                    found += things[i].stackCount * val;
+                    if (found >= needed)
                         return true;
                 }
             }
